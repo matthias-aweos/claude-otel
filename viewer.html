@@ -333,10 +333,43 @@
   .tool-chip{
     border:1px solid var(--rule-bright);padding:10px 12px;
     display:flex;flex-direction:column;gap:4px;
-    transition:border-color .15s;
+    transition:border-color .15s;cursor:pointer;
   }
   .tool-chip:hover{border-color:var(--tool)}
-  .tool-chip .tn{font-size:11.5px;color:var(--tool);letter-spacing:.02em}
+  .tool-chip .tn{font-size:11.5px;color:var(--tool);letter-spacing:.02em;display:flex;justify-content:space-between;gap:8px}
+  .tool-chip .tn small{color:var(--paper-mute)}
+
+  /* Werkzeug-Modal: vollständige Beschreibung und Eingabeschema */
+  #tool-modal{
+    border:1px solid var(--rule-bright);background:var(--ink);color:var(--paper);
+    width:min(960px,92vw);max-height:88vh;padding:0;margin:auto;
+  }
+  #tool-modal::backdrop{background:rgba(0,0,0,.55)}
+  #tool-modal .tm-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+    padding:14px 20px;border-bottom:1px solid var(--rule-bright);
+    position:sticky;top:0;background:var(--ink);
+  }
+  #tool-modal .tm-name{font-size:15px;color:var(--tool);letter-spacing:.02em}
+  #tool-modal .tm-meta{font-size:11px;color:var(--paper-mute)}
+  #tool-modal .tm-close{
+    border:1px solid var(--rule-bright);background:none;color:var(--paper);
+    font:inherit;font-size:11px;padding:4px 10px;cursor:pointer;
+  }
+  #tool-modal .tm-close:hover{border-color:var(--tool)}
+  #tool-modal .tm-body{padding:16px 20px 20px;overflow-y:auto;max-height:calc(88vh - 60px)}
+  #tool-modal h4{
+    margin:0 0 8px;font-size:10.5px;font-weight:normal;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--paper-mute);
+  }
+  #tool-modal .tm-desc{
+    font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
+    margin-bottom:20px;
+  }
+  #tool-modal .tm-schema{
+    font-size:11.5px;line-height:1.5;white-space:pre;overflow-x:auto;
+    color:var(--paper-mute);border-top:1px solid var(--rule-bright);padding-top:12px;
+  }
   .tool-chip .td{
     font-size:10.5px;color:var(--paper-mute);
     overflow:hidden;text-overflow:ellipsis;
@@ -1288,7 +1321,7 @@ function renderDoc(){
       const det = document.createElement('details');
       det.className = 'meta-block';
       const sumEl = document.createElement('summary');
-      sumEl.innerHTML = `<span class="caret">▸</span><span class="mb-label">SYSTEM</span><span class="mb-title">prompt</span><span class="mb-meta">${fmt.k(sys.length)} chars</span>`;
+      sumEl.innerHTML = `<span class="caret">▸</span><span class="mb-label">SYSTEM</span><span class="mb-title">prompt</span><span class="mb-meta" data-tok="system">${fmt.k(sys.length)} chars</span>`;
       det.appendChild(sumEl);
       const cont = document.createElement('div');
       cont.className = 'meta-content';
@@ -1307,19 +1340,23 @@ function renderDoc(){
           <span class="caret">▸</span>
           <span class="mb-label">TOOLS</span>
           <span class="mb-title">${first.tools.length} registered</span>
-          <span class="mb-meta">click to expand</span>
+          <span class="mb-meta" data-tok="tools">click to expand</span>
         </summary>
         <div class="meta-content">
           <div class="tools-grid">
-            ${first.tools.map(t=>`
-              <div class="tool-chip">
-                <div class="tn">${escHtml(t.name||'?')}</div>
+            ${first.tools.map((t,i)=>`
+              <div class="tool-chip" data-tool="${i}" title="Klick: vollständige Beschreibung und Schema">
+                <div class="tn"><span>${escHtml(t.name||'?')}</span><small data-tok-tool="${i}">${fmt.k(JSON.stringify(t).length)} chars</small></div>
                 <div class="td">${escHtml((t.description||'').slice(0,160))}</div>
               </div>`).join('')}
           </div>
         </div>`;
+      det.querySelectorAll('.tool-chip').forEach(el=>{
+        el.addEventListener('click', ()=> openToolModal(first.tools[+el.dataset.tool]));
+      });
       inner.appendChild(det);
     }
+    ladeTokens(first, inner);
   }
 
   // Turns
@@ -1822,6 +1859,69 @@ async function bootServer(){
 (async ()=>{
   const mode = await detectMode();
   if(mode === 'server') bootServer();
+})();
+</script>
+<dialog id="tool-modal">
+  <div class="tm-head">
+    <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
+    <button class="tm-close" type="button">schließen · esc</button>
+  </div>
+  <div class="tm-body">
+    <h4>Beschreibung</h4>
+    <div class="tm-desc"></div>
+    <h4>Eingabeschema</h4>
+    <div class="tm-schema"></div>
+  </div>
+</dialog>
+<script>
+// Token je Werkzeug und System-Block: der Server misst über count_tokens,
+// was für dieses Modell noch fehlt, und liefert alles zurück (POST /api/tokens).
+let TOKENS = null;
+async function ladeTokens(first, inner){
+  TOKENS = null;
+  const model = first.model;
+  const tools = first.tools || [];
+  const system = Array.isArray(first.system) ? first.system : (first.system ? [{type:'text', text:String(first.system)}] : []);
+  const setMeta = (sel, text)=>{ const el = inner.querySelector(sel); if(el) el.textContent = text; };
+  setMeta('[data-tok="tools"]', 'token werden gemessen…');
+  let r;
+  try { r = await (await fetch('/api/tokens', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({model, tools, system})})).json(); }
+  catch(e){ setMeta('[data-tok="tools"]', 'token: nicht messbar'); return; }
+  if(r.error === 'no_key'){ setMeta('[data-tok="tools"]', 'token: kein API-Schlüssel (.env)'); return; }
+  if(r.error){ setMeta('[data-tok="tools"]', 'token: ' + (r.detail || r.error)); return; }
+  TOKENS = r;
+  const sysEl = inner.querySelector('[data-tok="system"]');
+  if(sysEl) sysEl.textContent = sysEl.textContent + ' · ' + fmt.k(r.system_summe) + ' tk';
+  setMeta('[data-tok="tools"]', fmt.k(r.werkzeuge_summe) + ' tk gesamt · ' + (r.aufrufe ? r.aufrufe + ' neu gemessen' : 'aus der Ablage'));
+  r.werkzeuge.forEach((w, i)=>{
+    const el = inner.querySelector(`[data-tok-tool="${i}"]`);
+    if(el) el.textContent = fmt.n(w.token) + ' tk · ' + fmt.k(JSON.stringify(tools[i]).length) + ' chars';
+  });
+}
+
+// Werkzeug-Modal: zeigt Beschreibung und Schema eines Werkzeugs vollständig.
+// Schließen per Esc (nativ), Schaltfläche oder Klick auf den Hintergrund.
+function openToolModal(t){
+  const d = document.getElementById('tool-modal');
+  if(!d || !t) return;
+  const desc = t.description || '';
+  const schema = t.input_schema ? JSON.stringify(t.input_schema, null, 2) : '';
+  d.querySelector('.tm-name').textContent = t.name || '?';
+  const w = TOKENS && TOKENS.werkzeuge ? TOKENS.werkzeuge.find(x => x.name === t.name) : null;
+  d.querySelector('.tm-meta').textContent =
+    (w ? fmt.n(w.token) + ' Token · ' : '') +
+    fmt.n(desc.length) + ' Zeichen Beschreibung · ' + fmt.n(JSON.stringify(t).length) + ' Zeichen gesamt' +
+    (t.defer_loading ? ' · aufgeschoben (nur der Name geht mit)' : '');
+  d.querySelector('.tm-desc').textContent = desc;
+  d.querySelector('.tm-schema').textContent = schema || '—';
+  d.querySelector('.tm-body').scrollTop = 0;
+  d.showModal();
+}
+(function(){
+  const d = document.getElementById('tool-modal');
+  if(!d) return;
+  d.querySelector('.tm-close').addEventListener('click', ()=> d.close());
+  d.addEventListener('click', (e)=>{ if(e.target === d) d.close(); });
 })();
 </script>
 </body>

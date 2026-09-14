@@ -26,3 +26,6 @@ package-lock.json
 *.log
 .omc
 .claude-otel
+
+# API-Schlüssel für count_tokens (Token-Messung im Viewer)
+.env

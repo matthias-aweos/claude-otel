@@ -9,6 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { measure, readApiKey } from './tokens.mjs';
 
 const PKG = 'claude-otel';
 const VERSION = '0.1.0';
@@ -212,10 +213,36 @@ function sendBytes(res, status, ctype, buf) {
   res.end(buf);
 }
 
+function readBody(req, maxBytes = 8 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on('data', c => { size += c.length; if (size > maxBytes) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+// POST /api/tokens — Token je Werkzeug und System-Block eines Requests.
+// Der Client schickt model, tools und system des Requests; gemessen wird nur,
+// was für dieses Modell noch nicht in der Ablage liegt (siehe tokens.mjs).
+async function handleTokens(req, res, ctx) {
+  let body;
+  try { body = JSON.parse(await readBody(req) || '{}'); }
+  catch (e) { return sendJson(res, 400, { error: 'bad json', detail: String(e.message || e) }); }
+  const apiKey = readApiKey(ctx.repoRoot);
+  try {
+    const out = await measure({ model: body.model, tools: body.tools || [], system: body.system || [], apiKey });
+    return sendJson(res, 200, out);
+  } catch (e) {
+    return sendJson(res, 502, { error: 'count_tokens failed', detail: String(e.message || e) });
+  }
+}
+
 function handle(req, res, ctx) {
-  if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
   const u = new URL(req.url, 'http://localhost');
   const p = u.pathname;
+  if (req.method === 'POST' && p === '/api/tokens') return handleTokens(req, res, ctx);
+  if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
 
   if (p === '/' || p === '/index.html')  return sendBytes(res, 200, 'text/html; charset=utf-8', ctx.getHtml());
   if (p === '/api/health')                return sendJson(res, 200, { ok: true, root: ctx.root, version: VERSION });
@@ -332,7 +359,8 @@ async function cmdView(opts, positional) {
     try { cached = fs.readFileSync(html); } catch { /* keep last good copy */ }
     return cached;
   };
-  const server = http.createServer((req, res) => handle(req, res, { root, getHtml }));
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const server = http.createServer((req, res) => handle(req, res, { root, getHtml, repoRoot }));
   server.on('error', err => { console.error(`${PKG}: ${err.message}`); process.exit(1); });
   server.listen(port, host, () => {
     const url = `http://${host}:${port}`;
