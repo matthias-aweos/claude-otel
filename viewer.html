@@ -1825,6 +1825,19 @@ function selectTurn(i){
   }
 }
 
+// Je Ebene nur ein Klappblock offen: öffnet sich ein <details>, schließen sich
+// seine Geschwister im selben Elternelement. Gilt für alle Ebenen im Dokument
+// (Turns, Rollen, Blöcke, Abschnitte, system-reminder). toggle bubbelt nicht,
+// deshalb Capture-Phase.
+document.addEventListener('toggle', (e) => {
+  const d = e.target;
+  if(!(d instanceof HTMLDetailsElement) || !d.open || !d.parentElement) return;
+  if(!d.closest('#doc-inner')) return;
+  for(const sib of d.parentElement.children){
+    if(sib !== d && sib.tagName === 'DETAILS' && sib.open) sib.open = false;
+  }
+}, true);
+
 function setupNav(){
   document.addEventListener('keydown', (e)=>{
     if(e.target.matches('input,textarea')) {
