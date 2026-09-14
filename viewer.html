@@ -378,6 +378,31 @@
   }
 
   /* ──────── TURN ──────── */
+  /* Turn-Gruppe: alle Requests, die zu einem Prompt gehören */
+  .turn-group{margin:0 0 28px;border-top:1px solid var(--rule-bright)}
+  .turn-group > summary{
+    list-style:none;cursor:pointer;
+    display:flex;align-items:baseline;gap:14px;
+    padding:14px 4px;transition:background .15s;
+  }
+  .turn-group > summary::-webkit-details-marker{display:none}
+  .turn-group > summary:hover{background:var(--surface-tint)}
+  .turn-group > summary .grp-caret{font-size:9px;color:var(--paper-mute);transition:transform .15s;align-self:center}
+  .turn-group[open] > summary .grp-caret{transform:rotate(90deg)}
+  .turn-group > summary .grp-label{font-size:9px;letter-spacing:.32em;text-transform:uppercase;color:var(--amber);font-weight:500;flex-shrink:0}
+  .turn-group > summary .grp-title{font-size:13px;color:var(--paper);flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .turn-group > summary .grp-meta{font-size:10.5px;color:var(--paper-mute);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .turn-group-body{padding:12px 0 0 12px}
+  .ti-int,.turn-int{
+    font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--violet);
+    border:1px solid var(--violet);padding:1px 5px;margin-left:8px;opacity:.8;
+  }
+  .side-group{
+    padding:14px 22px 4px;font-size:9px;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--amber);display:flex;gap:10px;align-items:baseline;
+  }
+  .side-group .sg-title{color:var(--paper-dim);letter-spacing:.02em;text-transform:none;font-size:11px;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
   .turn{
     margin-bottom:48px;scroll-margin-top:24px;
     position:relative;
@@ -844,7 +869,7 @@
           <div class="stat-v" id="s-name">—</div>
         </div>
         <div class="stat">
-          <div class="stat-l">Turns</div>
+          <div class="stat-l">Turns · Requests</div>
           <div class="stat-v amber" id="s-turns">0</div>
         </div>
         <div class="stat">
@@ -1283,7 +1308,6 @@ function renderHeader(){
 
   const labelPrefix = d.projectLabel ? `${d.projectLabel} · ` : '';
   document.getElementById('s-name').textContent = labelPrefix + d.dirName;
-  document.getElementById('s-turns').innerHTML = d.turns.length;
   document.getElementById('s-in').innerHTML  = fmt.k(inT) + '<small>tk</small>';
   document.getElementById('s-out').innerHTML = fmt.k(outT) + '<small>tk</small>';
   document.getElementById('s-cache').innerHTML = fmt.k(crT) + '<small>tk</small>';
@@ -1304,7 +1328,19 @@ function renderHeader(){
 function renderSidebar(){
   const list = document.getElementById('turn-list');
   list.innerHTML = '';
-  S.data.turns.forEach((t, i)=>{
+  S.groups = groupTurns(S.data.turns);
+  document.getElementById('s-turns').innerHTML = S.groups.length + '<small>' + S.data.turns.length + ' req</small>';
+  S.groups.forEach(g=>{
+    const h = document.createElement('div');
+    h.className = 'side-group';
+    h.innerHTML = `<span>Turn ${g.nr}</span><span class="sg-title" title="${escHtml(g.title)}">${escHtml(g.title)}</span><span>${g.idxs.length}</span>`;
+    list.appendChild(h);
+    g.idxs.forEach(i=> list.appendChild(sidebarItem(S.data.turns[i], i)));
+  });
+}
+
+function sidebarItem(t, i){
+  {
     const u = (t.resp && t.resp.body.usage) || {};
     const model = (t.resp && t.resp.body.model) || (t.req && t.req.body.model) || '?';
     const inT = u.input_tokens || 0;
@@ -1320,7 +1356,7 @@ function renderSidebar(){
     el.innerHTML = `
       <div class="ti-num">${String(i+1).padStart(2,'0')}</div>
       <div class="ti-body">
-        <div class="ti-model">${escHtml(shortModel(model))}</div>
+        <div class="ti-model">${escHtml(shortModel(model))}${t.internal?' <span class="ti-int">intern</span>':''}</div>
         <div class="ti-meta">
           <span class="in">▸ ${fmt.k(inT)}</span>
           <span class="out">◂ ${fmt.k(outT)}</span>
@@ -1330,8 +1366,43 @@ function renderSidebar(){
         <div class="ti-time">${fmt.time(ts)}</div>
       </div>`;
     el.addEventListener('click', ()=> selectTurn(i));
-    list.appendChild(el);
+    return el;
+  }
+}
+
+// Requests zu Turns gruppieren: ein neuer Turn beginnt, wenn die letzte
+// user-Nachricht des Requests kein tool_result enthält (also ein neuer Prompt ist).
+function turnTitle(m){
+  const blocks = contentBlocks(m.content);
+  const txt = blocks.filter(b=>b.type==='text').map(b=>b.text||'').join('\n')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g,' ');
+  return previewOf(txt, 90) || '(ohne Text)';
+}
+// Interne Nebenanfragen von Claude Code (kein Prompt des Benutzers): sie
+// hängen am vorherigen Turn und werden als „intern" markiert.
+const INTERNAL_PROMPTS = [
+  /^\[SUGGESTION MODE/,                       // Vorschlag für die nächste Eingabe
+  /^The user stepped away and is coming back/, // Recap nach Rückkehr
+];
+function isInternalPrompt(m){
+  const txt = contentBlocks(m.content).filter(b=>b.type==='text').map(b=>b.text||'').join('\n')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g,'').trim();
+  return INTERNAL_PROMPTS.some(re => re.test(txt));
+}
+function groupTurns(turns){
+  const groups = [];
+  turns.forEach((t, i)=>{
+    const msgs = t.req?.body?.messages || [];
+    const lastUser = [...msgs].reverse().find(m=>m.role==='user');
+    const blocks = lastUser ? contentBlocks(lastUser.content) : [];
+    t.internal = !!(lastUser && isInternalPrompt(lastUser));
+    const isPrompt = lastUser && !t.internal && !blocks.some(b=>b.type==='tool_result');
+    if(isPrompt || !groups.length){
+      groups.push({nr: groups.length+1, title: lastUser ? turnTitle(lastUser) : '(ohne Prompt)', idxs: []});
+    }
+    groups[groups.length-1].idxs.push(i);
   });
+  return groups;
 }
 
 function shortModel(m){
@@ -1391,9 +1462,24 @@ function renderDoc(){
     ladeTokens(first, inner);
   }
 
-  // Turns
-  S.data.turns.forEach((t, i)=>{
-    inner.appendChild(renderTurn(t, i));
+  // Turns: je Prompt eine Gruppe, darin die Requests
+  (S.groups || groupTurns(S.data.turns)).forEach(g=>{
+    const det = document.createElement('details');
+    det.className = 'turn-group';
+    det.id = 'group-'+g.nr;
+    const ts = g.idxs.map(i=>S.data.turns[i]).map(t=>(t.req||t.resp).ts);
+    let outT=0, cwT=0;
+    g.idxs.forEach(i=>{ const u=S.data.turns[i].resp?.body?.usage||{}; outT+=u.output_tokens||0; cwT+=u.cache_creation_input_tokens||0; });
+    const sum = document.createElement('summary');
+    sum.innerHTML = `<span class="grp-caret">▸</span><span class="grp-label">Turn ${g.nr}</span>`
+      + `<span class="grp-title">${escHtml(g.title)}</span>`
+      + `<span class="grp-meta">${g.idxs.length} request${g.idxs.length===1?'':'s'} · ${fmt.time(Math.min(...ts))} → ${fmt.time(Math.max(...ts))} · out ${fmt.k(outT)} · cache·w ${fmt.k(cwT)}</span>`;
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.className = 'turn-group-body';
+    g.idxs.forEach(i=> body.appendChild(renderTurn(S.data.turns[i], i)));
+    det.appendChild(body);
+    inner.appendChild(det);
   });
 }
 
@@ -1418,7 +1504,7 @@ function renderTurn(t, i){
   head.innerHTML = `
     <div class="turn-id">${String(i+1).padStart(2,'0')}<span class="turn-id-of">/${String(total).padStart(2,'0')}</span></div>
     <div>
-      <div class="turn-tag">${escHtml(shortModel(model))}<span class="turn-msgs ${msgsLvl}">msgs ${msgsN}</span></div>
+      <div class="turn-tag">${escHtml(shortModel(model))}<span class="turn-msgs ${msgsLvl}">msgs ${msgsN}</span>${t.internal?'<span class="turn-int">intern · Nebenanfrage von Claude Code</span>':''}</div>
       <div style="font-size:10px;color:var(--paper-mute);letter-spacing:.06em;margin-top:4px">
         ${t.req ? 'req · '+t.req.file.slice(0,10)+'… ' : ''}${t.resp ? '· resp · '+t.resp.file.slice(0,12)+'…' : ''}
       </div>
@@ -1630,7 +1716,11 @@ function selectTurn(i){
     el.classList.toggle('active', idx===i);
   });
   const el = document.getElementById('turn-'+i);
-  if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+  if(el){
+    const grp = el.closest('details.turn-group');
+    if(grp) grp.open = true;
+    el.scrollIntoView({behavior:'smooth', block:'start'});
+  }
 }
 
 function setupNav(){
