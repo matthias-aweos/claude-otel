@@ -379,20 +379,26 @@
 
   /* ──────── TURN ──────── */
   /* Turn-Gruppe: alle Requests, die zu einem Prompt gehören */
-  .turn-group{margin:0 0 28px;border-top:1px solid var(--rule-bright)}
+  .turn-group{margin:0 0 32px;border-top:2px solid var(--amber)}
   .turn-group > summary{
     list-style:none;cursor:pointer;
-    display:flex;align-items:baseline;gap:14px;
-    padding:14px 4px;transition:background .15s;
+    display:grid;grid-template-columns:auto auto 1fr;grid-template-rows:auto auto;
+    column-gap:18px;row-gap:4px;align-items:baseline;
+    padding:20px 8px 18px;transition:background .15s;
   }
   .turn-group > summary::-webkit-details-marker{display:none}
   .turn-group > summary:hover{background:var(--surface-tint)}
-  .turn-group > summary .grp-caret{font-size:9px;color:var(--paper-mute);transition:transform .15s;align-self:center}
+  .turn-group > summary .grp-caret{font-size:14px;color:var(--amber);transition:transform .15s;align-self:center;grid-row:1 / span 2}
   .turn-group[open] > summary .grp-caret{transform:rotate(90deg)}
-  .turn-group > summary .grp-label{font-size:9px;letter-spacing:.32em;text-transform:uppercase;color:var(--amber);font-weight:500;flex-shrink:0}
-  .turn-group > summary .grp-title{font-size:13px;color:var(--paper);flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-  .turn-group > summary .grp-meta{font-size:10.5px;color:var(--paper-mute);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .turn-group > summary .grp-label{
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif;
+    font-size:40px;line-height:.9;color:var(--amber);letter-spacing:-.02em;grid-row:1 / span 2;
+  }
+  .turn-group > summary .grp-label small{font-size:10px;letter-spacing:.32em;text-transform:uppercase;font-family:inherit;display:block;margin-bottom:6px;color:var(--paper-mute)}
+  .turn-group > summary .grp-title{font-size:18px;line-height:1.3;color:var(--paper);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .turn-group > summary .grp-meta{font-size:11px;color:var(--paper-mute);font-variant-numeric:tabular-nums;grid-column:3}
   .turn-group-body{padding:12px 0 0 12px}
+  .turn-group[open] > summary{border-bottom:1px solid var(--rule-bright)}
   .ti-int,.turn-int{
     font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--violet);
     border:1px solid var(--violet);padding:1px 5px;margin-left:8px;opacity:.8;
@@ -414,7 +420,7 @@
   }
   .turn-id{
     font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif;
-    font-size:48px;line-height:.85;color:var(--amber);
+    font-size:30px;line-height:.85;color:var(--amber);
     letter-spacing:-.02em;
   }
   .turn-id-of{color:var(--paper-mute);font-size:13px;margin-left:2px}
@@ -1483,11 +1489,12 @@ function renderDoc(){
     const det = document.createElement('details');
     det.className = 'turn-group';
     det.id = 'group-'+g.nr;
+    det.setAttribute('name', 'turn-group'); // gleicher Name = nur einer offen
     const ts = g.idxs.map(i=>S.data.turns[i]).map(t=>(t.req||t.resp).ts);
     let outT=0, cwT=0;
     g.idxs.forEach(i=>{ const u=S.data.turns[i].resp?.body?.usage||{}; outT+=u.output_tokens||0; cwT+=u.cache_creation_input_tokens||0; });
     const sum = document.createElement('summary');
-    sum.innerHTML = `<span class="grp-caret">▸</span><span class="grp-label">Turn ${g.nr}</span>`
+    sum.innerHTML = `<span class="grp-caret">▸</span><span class="grp-label"><small>Turn</small>${g.nr}</span>`
       + `<span class="grp-title">${escHtml(g.title)}</span>`
       + `<span class="grp-meta">${g.idxs.length} request${g.idxs.length===1?'':'s'} · ${fmt.time(Math.min(...ts))} → ${fmt.time(Math.max(...ts))} · out ${fmt.k(outT)} · cache·w ${fmt.k(cwT)}</span>`;
     det.appendChild(sum);
