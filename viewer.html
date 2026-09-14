@@ -375,6 +375,12 @@
     margin-bottom:20px;
   }
   dialog.modal .cm-content{font-size:12.5px;line-height:1.65}
+  dialog.modal .cm-content pre.raw{margin:0;white-space:pre-wrap;word-break:break-word;font-size:11.5px;line-height:1.55;color:var(--paper-2)}
+  dialog.modal .tm-actions{display:flex;gap:10px;align-items:center;flex-shrink:0}
+  dialog.modal .tm-views{display:inline-flex;border:1px solid var(--rule-bright)}
+  dialog.modal .tm-views button{border:0;background:none;color:var(--paper-mute);font:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
+  dialog.modal .tm-views button+button{border-left:1px solid var(--rule-bright)}
+  dialog.modal .tm-views button.on{color:var(--paper);background:var(--surface-tint)}
   dialog.modal .cm-content .toolcall-body pre,dialog.modal .cm-content .toolresult pre{max-height:none}
   /* Blatt: sieht aus wie ein Klappblock, öffnet aber das Modal */
   .acc.leaf > summary .ac-caret{color:var(--paper-mute)}
@@ -421,6 +427,10 @@
   }
   .side-group .sg-title{color:var(--paper-dim);letter-spacing:.02em;text-transform:none;font-size:11px;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 
+  details.turn > summary{list-style:none;cursor:pointer}
+  details.turn > summary::-webkit-details-marker{display:none}
+  details.turn > summary:hover{background:var(--surface-tint)}
+  details.turn:not([open]){margin-bottom:10px}
   .turn{
     margin-bottom:48px;scroll-margin-top:24px;
     position:relative;
@@ -1201,14 +1211,14 @@ function makeTagBlock(tag, inner){
       if(sec.kind === 'pre'){ body.appendChild(mdRender(sec.text)); return; }
       const shown = sec.path.replace(/^\/Users\/[^/]+/, '~');
       body.appendChild(makeLeaf('blk file', shown, sec.note, previewOf(sec.text, 120), sec.text.length,
-        ()=> wrapText(taggedRender(sec.text))));
+        ()=> wrapText(taggedRender(sec.text)), sec.text));
     });
     det.appendChild(body);
   } else {
     // Blatt: Inhalt im Modal
     sum.addEventListener('click', (e)=>{
       e.preventDefault();
-      openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)));
+      openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)), '<'+tag+'>' + inner + '</'+tag+'>');
     });
   }
   return det;
@@ -1599,7 +1609,8 @@ function renderDoc(){
 }
 
 function renderTurn(t, i){
-  const sec = document.createElement('section');
+  // Request als Klappblock: Kopf ist die Zusammenfassung, Inhalt erst beim Öffnen sichtbar
+  const sec = document.createElement('details');
   sec.className = 'turn';
   sec.id = 'turn-'+i;
 
@@ -1614,7 +1625,7 @@ function renderTurn(t, i){
   const msgsN = messages.length;
   const msgsLvl = msgsN <= 1 ? 'lvl1' : (msgsN <= 4 ? 'lvl2' : 'lvl3');
 
-  const head = document.createElement('div');
+  const head = document.createElement('summary');
   head.className = 'turn-head';
   head.innerHTML = `
     <div class="turn-id">${String(i+1).padStart(2,'0')}<span class="turn-id-of">/${String(total).padStart(2,'0')}</span></div>
@@ -1766,13 +1777,13 @@ function makeAcc(cls, name, meta, preview, len, open){
 
 // Blatt: Zeile im Baum ohne eigenen Körper; Klick öffnet den Inhalt im Modal.
 // build() liefert den Inhalt erst beim Öffnen (große Texte werden nicht vorab gerendert).
-function makeLeaf(cls, name, meta, preview, len, build){
+function makeLeaf(cls, name, meta, preview, len, build, raw){
   const {det} = makeAcc(cls + ' leaf', name, meta, preview, len, false);
   const sum = det.querySelector('summary');
   sum.querySelector('.ac-caret').textContent = '↗';
   sum.addEventListener('click', (e)=>{
     e.preventDefault(); // nicht aufklappen
-    openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build);
+    openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build, raw);
   });
   return det;
 }
@@ -1802,7 +1813,7 @@ function renderMessageContent(content, parent, asUser){
         const {det, body} = makeAcc('blk '+kind, 'text', secs.length + ' sections', previewOf(txt, 120), txt.length, false);
         secs.forEach(sec => body.appendChild(
           makeLeaf('blk ctx', sec.title, null, previewOf(sec.text, 120), sec.text.length,
-            ()=> wrapText(renderTextSmart(sec.text, kind)))));
+            ()=> wrapText(renderTextSmart(sec.text, kind)), sec.text)));
         parent.appendChild(det);
       } else if(asUser && hasTags(txt)){
         // Text mit XML-Tags (system-reminder …): Zweig, die Tag-Blöcke darin sind Blätter oder Zweige
@@ -1811,7 +1822,7 @@ function renderMessageContent(content, parent, asUser){
         parent.appendChild(det);
       } else {
         parent.appendChild(makeLeaf('blk '+kind, 'text', null, previewOf(txt, 120), txt.length,
-          ()=> wrapText(renderTextSmart(txt, kind))));
+          ()=> wrapText(renderTextSmart(txt, kind)), txt));
       }
     } else if(b.type==='thinking' || b.type==='redacted_thinking'){
       parent.appendChild(makeLeaf('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, ()=>{
@@ -1819,7 +1830,7 @@ function renderMessageContent(content, parent, asUser){
         div.className='think';
         div.appendChild(renderTextSmart(txt || '<redacted>', 'asst'));
         return div;
-      }));
+      }, b));
     } else if(b.type==='tool_use'){
       const inp = b.input||{};
       const pv = inp.description || inp.command || inp.file_path || inp.pattern || inp.prompt || inp.query || txt;
@@ -1828,7 +1839,7 @@ function renderMessageContent(content, parent, asUser){
         wrap.className='toolcall';
         wrap.innerHTML = `<div class="toolcall-body"><pre>${jsonHl(inp)}</pre></div>`;
         return wrap;
-      }));
+      }, b));
     } else if(b.type==='tool_result'){
       const isErr = b.is_error;
       parent.appendChild(makeLeaf('blk '+(isErr?'err':'tool'), '◂◂ tool_result'+(isErr?' · error':''), (b.tool_use_id||'').slice(-12), previewOf(txt, 120), txt.length, ()=>{
@@ -1839,7 +1850,7 @@ function renderMessageContent(content, parent, asUser){
         rb.appendChild(renderTextSmart(txt,'user'));
         out.appendChild(rb);
         return out;
-      }));
+      }, b));
     } else {
       const div = document.createElement('div');
       div.className='block text';
@@ -1867,6 +1878,7 @@ function selectTurn(i){
   if(el){
     const grp = el.closest('details.turn-group');
     if(grp) grp.open = true;
+    el.open = true;
     el.scrollIntoView({behavior:'smooth', block:'start'});
   }
 }
@@ -2196,28 +2208,55 @@ async function bootServer(){
 <dialog id="content-modal" class="modal">
   <div class="tm-head">
     <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
-    <button class="tm-close" type="button">schließen · esc</button>
+    <div class="tm-actions">
+      <span class="tm-views"><button type="button" data-view="render">gerendert</button><button type="button" data-view="raw">roh</button></span>
+      <button class="tm-close" type="button">schließen · esc</button>
+    </div>
   </div>
   <div class="tm-body"><div class="cm-content"></div></div>
 </dialog>
 <script>
 // Inhalts-Modal: zeigt den Text eines Blatts (Datei, Abschnitt, Block, Werkzeugaufruf …).
-function openContentModal(title, meta, build){
+// build() liefert die gerenderte Ansicht, raw den Rohtext (String) oder das
+// Roh-JSON (Objekt). Die gewählte Ansicht bleibt über mehrere Öffnungen erhalten.
+let CM_VIEW = 'render';
+let CM_CURRENT = null;
+function openContentModal(title, meta, build, raw){
   const d = document.getElementById('content-modal');
   if(!d) return;
   d.querySelector('.tm-name').textContent = title;
   d.querySelector('.tm-meta').textContent = meta || '';
+  CM_CURRENT = {build, raw};
+  renderContentModal();
+  d.showModal();
+}
+function renderContentModal(){
+  const d = document.getElementById('content-modal');
   const c = d.querySelector('.cm-content');
   c.innerHTML = '';
-  c.appendChild(build());
+  if(CM_VIEW === 'raw' && CM_CURRENT.raw != null){
+    const pre = document.createElement('pre');
+    pre.className = 'raw';
+    pre.textContent = typeof CM_CURRENT.raw === 'string' ? CM_CURRENT.raw : JSON.stringify(CM_CURRENT.raw, null, 2);
+    c.appendChild(pre);
+  } else {
+    c.appendChild(CM_CURRENT.build());
+  }
+  d.querySelectorAll('.tm-views button').forEach(b => b.classList.toggle('on', b.dataset.view === CM_VIEW));
   d.querySelector('.tm-body').scrollTop = 0;
-  d.showModal();
 }
 (function(){
   const d = document.getElementById('content-modal');
   if(!d) return;
   d.querySelector('.tm-close').addEventListener('click', ()=> d.close());
   d.addEventListener('click', (e)=>{ if(e.target === d) d.close(); });
+  d.querySelectorAll('.tm-views button').forEach(b => b.addEventListener('click', ()=>{
+    CM_VIEW = b.dataset.view; renderContentModal();
+  }));
+  // Taste r wechselt die Ansicht, solange das Modal offen ist
+  d.addEventListener('keydown', (e)=>{
+    if(e.key === 'r' && !e.metaKey && !e.ctrlKey){ e.preventDefault(); CM_VIEW = CM_VIEW === 'raw' ? 'render' : 'raw'; renderContentModal(); }
+  });
 })();
 
 // Token je Werkzeug und System-Block: der Server misst über count_tokens,
