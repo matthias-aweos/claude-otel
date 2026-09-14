@@ -655,6 +655,8 @@
   .acc.think{border-color:var(--violet)}.acc.think > summary .ac-name{color:var(--violet)}
   .acc.tool{border-color:var(--tool)}   .acc.tool  > summary .ac-name{color:var(--tool)}
   .acc.err{border-color:var(--red)}     .acc.err   > summary .ac-name{color:var(--red)}
+  .acc.file{border-color:var(--paper-mute)}
+  .acc.file > summary .ac-name{color:var(--paper-2);text-transform:none;letter-spacing:.02em}
   .acc.blk{margin:6px 0;border-left-width:1px}
   .acc.blk > summary{padding:4px 10px}
   .acc.blk > summary .ac-name{letter-spacing:.12em;text-transform:none}
@@ -1179,9 +1181,38 @@ function makeTagBlock(tag, inner){
   det.appendChild(sum);
   const body = document.createElement('div');
   body.className = 'tagblock-body';
-  body.appendChild(taggedRender(inner));
+  const secs = splitFileSections(inner);
+  if(secs){
+    // Anweisungskette: je Datei ein eigener Klappblock
+    secs.forEach(sec => {
+      if(sec.kind === 'pre'){ body.appendChild(mdRender(sec.text)); return; }
+      const shown = sec.path.replace(/^\/Users\/[^/]+/, '~');
+      const {det: fd, body: fb} = makeAcc('blk file', shown, sec.note, previewOf(sec.text, 120), sec.text.length, false);
+      fb.appendChild(taggedRender(sec.text));
+      body.appendChild(fd);
+    });
+  } else {
+    body.appendChild(taggedRender(inner));
+  }
   det.appendChild(body);
   return det;
+}
+
+// Zerlegt einen Text an den Kopfzeilen „Contents of <Pfad> (<Hinweis>):", mit denen
+// Claude Code die CLAUDE.md-Kette zusammensetzt. null, wenn keine solche Zeile vorkommt.
+function splitFileSections(text){
+  const re = /^Contents of (.+?) \(([^)]*)\):[ \t]*$/gm;
+  const marks = [...text.matchAll(re)];
+  if(!marks.length) return null;
+  const out = [];
+  const pre = text.slice(0, marks[0].index);
+  if(pre.trim()) out.push({kind:'pre', text: pre});
+  marks.forEach((m, i) => {
+    const start = m.index + m[0].length;
+    const end = i+1 < marks.length ? marks[i+1].index : text.length;
+    out.push({kind:'file', path: m[1], note: m[2], text: text.slice(start, end)});
+  });
+  return out;
 }
 
 const HTML_TAG_DENY = new Set([
