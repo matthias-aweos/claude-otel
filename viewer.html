@@ -386,6 +386,7 @@
     font-size:11px;line-height:1.5;color:var(--paper-mute);
     white-space:pre-wrap;word-break:break-all;
   }
+  #content-modal .cm-json .jl{min-height:1.5em}
   #content-modal .cm-json mark{background:rgba(200,146,54,.28);color:var(--paper);outline:1px solid var(--amber)}
   dialog.modal .cm-content .toolcall-body pre,dialog.modal .cm-content .toolresult pre{max-height:none}
   /* Blatt: sieht aus wie ein Klappblock, öffnet aber das Modal */
@@ -2314,11 +2315,31 @@ function fillJsonPane(pre, loc){
     for(const p of loc.path) v = v == null ? v : v[p];
     if(typeof v === 'string') [a, b] = escapedRange(v, loc.sub[0], loc.sub[1], hit.start);
   }
-  pre.appendChild(document.createTextNode(text.slice(0, a)));
-  const mark = document.createElement('mark');
-  mark.textContent = text.slice(a, b);
-  pre.appendChild(mark);
-  pre.appendChild(document.createTextNode(text.slice(b)));
+  // Je Zeile ein Element mit hängender Einrückung: umbrochene Folgezeilen
+  // beginnen auf der Einrückung ihrer Zeile, nicht am linken Rand.
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  for(const line of text.split('\n')){
+    const ls = pos, le = pos + line.length;
+    pos = le + 1;
+    const indent = line.length - line.trimStart().length;
+    const div = document.createElement('div');
+    div.className = 'jl';
+    div.style.paddingLeft = indent + 'ch';
+    const body = line.slice(indent), bs = ls + indent;
+    const ma = Math.max(a, bs), mb = Math.min(b, le);
+    if(ma < mb){
+      if(ma > bs) div.appendChild(document.createTextNode(body.slice(0, ma - bs)));
+      const mark = document.createElement('mark');
+      mark.textContent = body.slice(ma - bs, mb - bs);
+      div.appendChild(mark);
+      if(mb < le) div.appendChild(document.createTextNode(body.slice(mb - bs)));
+    } else {
+      div.textContent = body || ' ';
+    }
+    frag.appendChild(div);
+  }
+  pre.appendChild(frag);
 }
 (function(){
   const d = document.getElementById('content-modal');
