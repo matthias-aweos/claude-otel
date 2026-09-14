@@ -655,6 +655,8 @@
   .acc.think{border-color:var(--violet)}.acc.think > summary .ac-name{color:var(--violet)}
   .acc.tool{border-color:var(--tool)}   .acc.tool  > summary .ac-name{color:var(--tool)}
   .acc.err{border-color:var(--red)}     .acc.err   > summary .ac-name{color:var(--red)}
+  .acc.ctx{border-color:var(--paper-mute)}
+  .acc.ctx > summary .ac-name{color:var(--paper-2);text-transform:none;letter-spacing:.02em}
   .acc.file{border-color:var(--paper-mute)}
   .acc.file > summary .ac-name{color:var(--paper-2);text-transform:none;letter-spacing:.02em}
   .acc.blk{margin:6px 0;border-left-width:1px}
@@ -1198,6 +1200,39 @@ function makeTagBlock(tag, inner){
   return det;
 }
 
+// Abschnittsanfänge im dynamischen Kontext, den Claude Code als Nachricht der Rolle
+// system anhängt. Jede Zeile, die auf eines der Muster passt, beginnt einen Abschnitt.
+const CONTEXT_MARKERS = [
+  [/^(\w+(?::\w+)?) hook (?:success|additional context|blocking error|error)\b.*$/, m => 'Hook ' + m[1]],
+  [/^# (Environment|Language|MCP Server Instructions)\s*$/, m => m[1]],
+  [/^The following deferred tools are now available/, () => 'Deferred tools (ToolSearch)'],
+  [/^Available agent types for the Agent tool/, () => 'Agent types (Agent tool)'],
+  [/^The following skills are available for use with the Skill tool/, () => 'Skills (Skill tool)'],
+];
+function splitContextSections(text){
+  const lines = text.split('\n');
+  const marks = [];
+  let pos = 0;
+  for(const line of lines){
+    for(const [re, title] of CONTEXT_MARKERS){
+      const m = line.match(re);
+      if(m){ marks.push({pos, title: title(m)}); break; }
+    }
+    pos += line.length + 1;
+  }
+  if(marks.length < 2) return null;
+  const out = [];
+  if(marks[0].pos > 0){
+    const pre = text.slice(0, marks[0].pos);
+    if(pre.trim()) out.push({title:'text', text: pre});
+  }
+  marks.forEach((m, i) => {
+    const end = i+1 < marks.length ? marks[i+1].pos : text.length;
+    out.push({title: m.title, text: text.slice(m.pos, end)});
+  });
+  return out;
+}
+
 // Zerlegt einen Text an den Kopfzeilen „Contents of <Pfad> (<Hinweis>):", mit denen
 // Claude Code die CLAUDE.md-Kette zusammensetzt. null, wenn keine solche Zeile vorkommt.
 function splitFileSections(text){
@@ -1721,10 +1756,23 @@ function renderMessageContent(content, parent, asUser){
     const txt = blockText(b);
     if(b.type==='text'){
       const {det, body} = makeAcc('blk '+(asUser?'user':'asst'), 'text', null, previewOf(txt, 120), txt.length, false);
-      const div = document.createElement('div');
-      div.className='block text';
-      div.appendChild(renderTextSmart(txt, asUser?'user':'asst'));
-      body.appendChild(div);
+      const secs = splitContextSections(txt);
+      if(secs){
+        // Dynamischer Kontext von Claude Code (Hook-Ausgaben, Tool-/Agent-/Skill-Listen …): je Abschnitt ein Klappblock
+        secs.forEach(sec => {
+          const {det: sd, body: sb} = makeAcc('blk ctx', sec.title, null, previewOf(sec.text, 120), sec.text.length, false);
+          const div = document.createElement('div');
+          div.className='block text';
+          div.appendChild(renderTextSmart(sec.text, asUser?'user':'asst'));
+          sb.appendChild(div);
+          body.appendChild(sd);
+        });
+      } else {
+        const div = document.createElement('div');
+        div.className='block text';
+        div.appendChild(renderTextSmart(txt, asUser?'user':'asst'));
+        body.appendChild(div);
+      }
       parent.appendChild(det);
     } else if(b.type==='thinking' || b.type==='redacted_thinking'){
       const {det, body} = makeAcc('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, false);
