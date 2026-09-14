@@ -375,12 +375,18 @@
     margin-bottom:20px;
   }
   dialog.modal .cm-content{font-size:12.5px;line-height:1.65}
-  dialog.modal .cm-content pre.raw{margin:0;white-space:pre-wrap;word-break:break-word;font-size:11.5px;line-height:1.55;color:var(--paper-2)}
-  dialog.modal .tm-actions{display:flex;gap:10px;align-items:center;flex-shrink:0}
-  dialog.modal .tm-views{display:inline-flex;border:1px solid var(--rule-bright)}
-  dialog.modal .tm-views button{border:0;background:none;color:var(--paper-mute);font:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
-  dialog.modal .tm-views button+button{border-left:1px solid var(--rule-bright)}
-  dialog.modal .tm-views button.on{color:var(--paper);background:var(--surface-tint)}
+  dialog.modal .tm-actions{display:flex;gap:14px;align-items:center;flex-shrink:0}
+  dialog.modal .tm-where{font-size:10.5px;color:var(--paper-mute);font-variant-numeric:tabular-nums}
+  #content-modal{width:min(1800px,96vw)}
+  #content-modal .cm-split{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:0;max-height:calc(88vh - 60px)}
+  #content-modal .cm-content{padding:16px 20px 20px;overflow-y:auto;max-height:calc(88vh - 60px)}
+  #content-modal .cm-json{
+    margin:0;padding:16px 20px 20px;overflow:auto;max-height:calc(88vh - 60px);
+    border-left:1px solid var(--rule-bright);background:var(--ink-2);
+    font-size:11px;line-height:1.5;color:var(--paper-mute);
+    white-space:pre-wrap;word-break:break-all;
+  }
+  #content-modal .cm-json mark{background:rgba(200,146,54,.28);color:var(--paper);outline:1px solid var(--amber)}
   dialog.modal .cm-content .toolcall-body pre,dialog.modal .cm-content .toolresult pre{max-height:none}
   /* Blatt: sieht aus wie ein Klappblock, öffnet aber das Modal */
   .acc.leaf > summary .ac-caret{color:var(--paper-mute)}
@@ -1194,7 +1200,7 @@ function classifyTag(t){
   return 'kc-mute';
 }
 
-function makeTagBlock(tag, inner){
+function makeTagBlock(tag, inner, loc){
   const det = document.createElement('details');
   det.className = 'tagblock ' + classifyTag(tag);
   const sum = document.createElement('summary');
@@ -1211,14 +1217,14 @@ function makeTagBlock(tag, inner){
       if(sec.kind === 'pre'){ body.appendChild(mdRender(sec.text)); return; }
       const shown = sec.path.replace(/^\/Users\/[^/]+/, '~');
       body.appendChild(makeLeaf('blk file', shown, sec.note, previewOf(sec.text, 120), sec.text.length,
-        ()=> wrapText(taggedRender(sec.text)), sec.text));
+        ()=> wrapText(taggedRender(sec.text)), loc ? {...loc, sub:[loc.offset + sec.start, loc.offset + sec.end]} : null));
     });
     det.appendChild(body);
   } else {
     // Blatt: Inhalt im Modal
     sum.addEventListener('click', (e)=>{
       e.preventDefault();
-      openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)), '<'+tag+'>' + inner + '</'+tag+'>');
+      openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)), loc ? {...loc, sub:[loc.tagStart, loc.tagEnd]} : null);
     });
   }
   return det;
@@ -1248,11 +1254,11 @@ function splitContextSections(text){
   const out = [];
   if(marks[0].pos > 0){
     const pre = text.slice(0, marks[0].pos);
-    if(pre.trim()) out.push({title:'text', text: pre});
+    if(pre.trim()) out.push({title:'text', text: pre, start: 0, end: marks[0].pos});
   }
   marks.forEach((m, i) => {
     const end = i+1 < marks.length ? marks[i+1].pos : text.length;
-    out.push({title: m.title, text: text.slice(m.pos, end)});
+    out.push({title: m.title, text: text.slice(m.pos, end), start: m.pos, end});
   });
   return out;
 }
@@ -1269,7 +1275,7 @@ function splitFileSections(text){
   marks.forEach((m, i) => {
     const start = m.index + m[0].length;
     const end = i+1 < marks.length ? marks[i+1].index : text.length;
-    out.push({kind:'file', path: m[1], note: m[2], text: text.slice(start, end)});
+    out.push({kind:'file', path: m[1], note: m[2], text: text.slice(start, end), start, end});
   });
   return out;
 }
@@ -1285,7 +1291,8 @@ const HTML_TAG_DENY = new Set([
   'details','summary','video','audio','iframe','svg','path','g','rect','circle','line','polyline','polygon',
 ]);
 
-function taggedRender(text){
+function taggedRender(text, loc){
+  // loc: {body, path, offset} — Ort dieses Textes im Request-JSON, für die Markierung im Modal
   const frag = document.createDocumentFragment();
   if(!text) return frag;
   let i = 0;
@@ -1332,17 +1339,17 @@ function taggedRender(text){
       break;
     }
     const innerText = text.slice(startIdx + openTag.length, closeIdx);
-    frag.appendChild(makeTagBlock(tag, innerText));
+    frag.appendChild(makeTagBlock(tag, innerText, loc ? {...loc, offset: (loc.offset||0) + startIdx + openTag.length, tagStart: (loc.offset||0) + startIdx, tagEnd: (loc.offset||0) + closeIdx + closeTag.length} : null));
     i = closeIdx + closeTag.length;
   }
   return frag;
 }
 
-function renderTextSmart(text, kind){
+function renderTextSmart(text, kind, loc){
   if(!text) return document.createDocumentFragment();
   if(kind === 'asst') return mdRender(text);
   if(/<[A-Za-z][A-Za-z0-9_-]*>[\s\S]*?<\/[A-Za-z][A-Za-z0-9_-]*>/.test(text)){
-    return taggedRender(text);
+    return taggedRender(text, loc);
   }
   return mdRender(text);
 }
@@ -1655,13 +1662,13 @@ function renderTurn(t, i){
     hist.appendChild(hsum);
     const hbody = document.createElement('div');
     hbody.className = 'history-body';
-    history.forEach(m => renderMessage(m, hbody));
+    history.forEach((m, k) => renderMessage(m, hbody, {body: t.req.body, path: ['messages', k]}));
     hist.appendChild(hbody);
     sec.appendChild(hist);
   }
 
   // Neue Eingabe: letzte User-Nachricht und alles, was danach noch im Request steht
-  messages.slice(lastUserIdx).forEach(m => renderMessage(m, sec));
+  messages.slice(lastUserIdx).forEach((m, k) => renderMessage(m, sec, {body: t.req.body, path: ['messages', lastUserIdx + k]}));
 
   // assistant response
   if(t.resp){
@@ -1673,7 +1680,7 @@ function renderTurn(t, i){
       div.textContent = JSON.stringify(t.resp.body.error || t.resp.body, null, 2);
       sec.appendChild(div);
     } else {
-      renderMessage({role:'assistant', content: t.resp.body.content || []}, sec);
+      renderMessage({role:'assistant', content: t.resp.body.content || []}, sec, {body: t.resp.body, path: []});
     }
   }
 
@@ -1777,52 +1784,58 @@ function makeAcc(cls, name, meta, preview, len, open){
 
 // Blatt: Zeile im Baum ohne eigenen Körper; Klick öffnet den Inhalt im Modal.
 // build() liefert den Inhalt erst beim Öffnen (große Texte werden nicht vorab gerendert).
-function makeLeaf(cls, name, meta, preview, len, build, raw){
+function makeLeaf(cls, name, meta, preview, len, build, loc){
   const {det} = makeAcc(cls + ' leaf', name, meta, preview, len, false);
   const sum = det.querySelector('summary');
   sum.querySelector('.ac-caret').textContent = '↗';
   sum.addEventListener('click', (e)=>{
     e.preventDefault(); // nicht aufklappen
-    openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build, raw);
+    openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build, loc);
   });
   return det;
 }
 const hasTags = (t)=> /<[A-Za-z][A-Za-z0-9_-]*>[\s\S]*?<\/[A-Za-z][A-Za-z0-9_-]*>/.test(t||'');
 
 // Eine Nachricht (user/assistant/system) als Rollen-Klappblock
-function renderMessage(m, parent){
+// base: {body, path} — Ort der Nachricht im Request- bzw. Antwort-JSON
+function renderMessage(m, parent, base){
   const blocks = contentBlocks(m.content);
   const chars = blocks.reduce((a,b)=> a + blockText(b).length, 0);
   const first = blocks.find(b => blockText(b).trim().length > 0);
   const {det, body} = makeAcc(roleClass(m.role), m.role.toUpperCase(),
     `${blocks.length} block${blocks.length===1?'':'s'}`,
     first ? previewOf(blockText(first), 110) : '', chars, false);
-  renderMessageContent(m.content, body, m.role==='user');
+  renderMessageContent(m.content, body, m.role==='user', base ? {body: base.body, path: base.path.concat('content')} : null);
   parent.appendChild(det);
 }
 
-function renderMessageContent(content, parent, asUser){
+function renderMessageContent(content, parent, asUser, base){
   const blocks = contentBlocks(content);
   const kind = asUser ? 'user' : 'asst';
-  for(const b of blocks){
+  const isStr = typeof content === 'string';
+  // Ort eines Blocks im JSON: bei String-Inhalt der String selbst, sonst content[i].<feld>
+  const at = (i, field) => base ? {body: base.body, path: isStr ? base.path : base.path.concat(i, field)} : null;
+  const blockAt = (i) => base ? {body: base.body, path: isStr ? base.path : base.path.concat(i)} : null;
+  blocks.forEach((b, i) => {
     const txt = blockText(b);
     if(b.type==='text'){
+      const loc = at(i, 'text');
       const secs = splitContextSections(txt);
       if(secs){
         // Dynamischer Kontext von Claude Code: Zweig mit einem Blatt je Abschnitt
         const {det, body} = makeAcc('blk '+kind, 'text', secs.length + ' sections', previewOf(txt, 120), txt.length, false);
         secs.forEach(sec => body.appendChild(
           makeLeaf('blk ctx', sec.title, null, previewOf(sec.text, 120), sec.text.length,
-            ()=> wrapText(renderTextSmart(sec.text, kind)), sec.text)));
+            ()=> wrapText(renderTextSmart(sec.text, kind)), loc ? {...loc, sub:[sec.start, sec.end]} : null)));
         parent.appendChild(det);
       } else if(asUser && hasTags(txt)){
         // Text mit XML-Tags (system-reminder …): Zweig, die Tag-Blöcke darin sind Blätter oder Zweige
         const {det, body} = makeAcc('blk '+kind, 'text', null, previewOf(txt, 120), txt.length, false);
-        body.appendChild(taggedRender(txt));
+        body.appendChild(taggedRender(txt, loc ? {...loc, offset: 0} : null));
         parent.appendChild(det);
       } else {
         parent.appendChild(makeLeaf('blk '+kind, 'text', null, previewOf(txt, 120), txt.length,
-          ()=> wrapText(renderTextSmart(txt, kind)), txt));
+          ()=> wrapText(renderTextSmart(txt, kind)), loc));
       }
     } else if(b.type==='thinking' || b.type==='redacted_thinking'){
       parent.appendChild(makeLeaf('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, ()=>{
@@ -1830,7 +1843,7 @@ function renderMessageContent(content, parent, asUser){
         div.className='think';
         div.appendChild(renderTextSmart(txt || '<redacted>', 'asst'));
         return div;
-      }, b));
+      }, blockAt(i)));
     } else if(b.type==='tool_use'){
       const inp = b.input||{};
       const pv = inp.description || inp.command || inp.file_path || inp.pattern || inp.prompt || inp.query || txt;
@@ -1839,7 +1852,7 @@ function renderMessageContent(content, parent, asUser){
         wrap.className='toolcall';
         wrap.innerHTML = `<div class="toolcall-body"><pre>${jsonHl(inp)}</pre></div>`;
         return wrap;
-      }, b));
+      }, blockAt(i)));
     } else if(b.type==='tool_result'){
       const isErr = b.is_error;
       parent.appendChild(makeLeaf('blk '+(isErr?'err':'tool'), '◂◂ tool_result'+(isErr?' · error':''), (b.tool_use_id||'').slice(-12), previewOf(txt, 120), txt.length, ()=>{
@@ -1850,7 +1863,7 @@ function renderMessageContent(content, parent, asUser){
         rb.appendChild(renderTextSmart(txt,'user'));
         out.appendChild(rb);
         return out;
-      }, b));
+      }, blockAt(i)));
     } else {
       const div = document.createElement('div');
       div.className='block text';
@@ -1858,7 +1871,7 @@ function renderMessageContent(content, parent, asUser){
       div.textContent = `[${b.type}] ${JSON.stringify(b).slice(0,200)}`;
       parent.appendChild(div);
     }
-  }
+  });
 }
 function wrapText(frag){
   const div = document.createElement('div');
@@ -2209,54 +2222,109 @@ async function bootServer(){
   <div class="tm-head">
     <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
     <div class="tm-actions">
-      <span class="tm-views"><button type="button" data-view="render">gerendert</button><button type="button" data-view="raw">roh</button></span>
+      <span class="tm-where"></span>
       <button class="tm-close" type="button">schließen · esc</button>
     </div>
   </div>
-  <div class="tm-body"><div class="cm-content"></div></div>
+  <div class="tm-body cm-split">
+    <div class="cm-content"></div>
+    <pre class="cm-json"></pre>
+  </div>
 </dialog>
 <script>
 // Inhalts-Modal: zeigt den Text eines Blatts (Datei, Abschnitt, Block, Werkzeugaufruf …).
-// build() liefert die gerenderte Ansicht, raw den Rohtext (String) oder das
-// Roh-JSON (Objekt). Die gewählte Ansicht bleibt über mehrere Öffnungen erhalten.
-let CM_VIEW = 'render';
-let CM_CURRENT = null;
-function openContentModal(title, meta, build, raw){
+// Inhalts-Modal: links die gerenderte Ansicht (build()), rechts der komplette
+// Request bzw. die Antwort als formatiertes JSON, der angeklickte Teil markiert.
+// loc = {body, path, sub?}: body ist das JSON, path der Pfad zum Wert
+// (z. B. ['messages',1,'content',0,'text']), sub ein Zeichenbereich innerhalb
+// eines String-Werts (Datei, Abschnitt, Tag-Block).
+function openContentModal(title, meta, build, loc){
   const d = document.getElementById('content-modal');
   if(!d) return;
   d.querySelector('.tm-name').textContent = title;
   d.querySelector('.tm-meta').textContent = meta || '';
-  CM_CURRENT = {build, raw};
-  renderContentModal();
-  d.showModal();
-}
-function renderContentModal(){
-  const d = document.getElementById('content-modal');
   const c = d.querySelector('.cm-content');
   c.innerHTML = '';
-  if(CM_VIEW === 'raw' && CM_CURRENT.raw != null){
-    const pre = document.createElement('pre');
-    pre.className = 'raw';
-    pre.textContent = typeof CM_CURRENT.raw === 'string' ? CM_CURRENT.raw : JSON.stringify(CM_CURRENT.raw, null, 2);
-    c.appendChild(pre);
+  c.appendChild(build());
+  c.scrollTop = 0;
+  const where = d.querySelector('.tm-where');
+  const pre = d.querySelector('.cm-json');
+  pre.innerHTML = '';
+  if(loc && loc.body){
+    where.textContent = pathLabel(loc.path) + (loc.sub ? ` [${fmt.n(loc.sub[0])}–${fmt.n(loc.sub[1])}]` : '');
+    fillJsonPane(pre, loc);
   } else {
-    c.appendChild(CM_CURRENT.build());
+    where.textContent = '';
+    pre.textContent = '(kein Ort im JSON bekannt)';
   }
-  d.querySelectorAll('.tm-views button').forEach(b => b.classList.toggle('on', b.dataset.view === CM_VIEW));
-  d.querySelector('.tm-body').scrollTop = 0;
+  d.showModal();
+  // erst nach dem Öffnen scrollen, sonst hat die Spalte noch keine Höhe
+  const m = pre.querySelector('mark');
+  if(m) requestAnimationFrame(()=> m.scrollIntoView({block:'center'}));
+}
+function pathLabel(path){
+  return path.map(p => typeof p === 'number' ? `[${p}]` : (path.indexOf(p)===0 ? p : '.'+p)).join('');
+}
+
+// Formatiert ein JSON wie JSON.stringify(obj, null, 2) und merkt sich je Pfad
+// die Zeichenpositionen des Werts. Ergebnis wird je Objekt gecacht.
+const JSON_INDEX = new WeakMap();
+function jsonIndex(obj){
+  if(JSON_INDEX.has(obj)) return JSON_INDEX.get(obj);
+  const parts = []; let pos = 0; const idx = new Map();
+  const emit = (t)=>{ parts.push(t); pos += t.length; };
+  function walk(v, path, ind){
+    const start = pos;
+    if(v === null || typeof v !== 'object'){
+      emit(JSON.stringify(v));
+    } else if(Array.isArray(v)){
+      if(!v.length) emit('[]');
+      else {
+        emit('[\n');
+        v.forEach((x, i)=>{ emit(ind+'  '); walk(x, path.concat(i), ind+'  '); emit(i < v.length-1 ? ',\n' : '\n'); });
+        emit(ind+']');
+      }
+    } else {
+      const ks = Object.keys(v);
+      if(!ks.length) emit('{}');
+      else {
+        emit('{\n');
+        ks.forEach((k, i)=>{ emit(ind+'  '+JSON.stringify(k)+': '); walk(v[k], path.concat(k), ind+'  '); emit(i < ks.length-1 ? ',\n' : '\n'); });
+        emit(ind+'}');
+      }
+    }
+    idx.set(JSON.stringify(path), {start, end: pos});
+  }
+  walk(obj, [], '');
+  const r = {text: parts.join(''), idx};
+  JSON_INDEX.set(obj, r);
+  return r;
+}
+// Zeichenbereich [a,b) eines Strings → Bereich im JSON-Text (Escapes verlängern)
+function escapedRange(str, a, b, strStart){
+  const off = (n)=> JSON.stringify(str.slice(0, n)).length - 1; // ohne schließendes Anführungszeichen
+  return [strStart + off(a), strStart + off(b)];
+}
+function fillJsonPane(pre, loc){
+  const {text, idx} = jsonIndex(loc.body);
+  const hit = idx.get(JSON.stringify(loc.path));
+  let a = hit ? hit.start : 0, b = hit ? hit.end : 0;
+  if(hit && loc.sub){
+    let v = loc.body;
+    for(const p of loc.path) v = v == null ? v : v[p];
+    if(typeof v === 'string') [a, b] = escapedRange(v, loc.sub[0], loc.sub[1], hit.start);
+  }
+  pre.appendChild(document.createTextNode(text.slice(0, a)));
+  const mark = document.createElement('mark');
+  mark.textContent = text.slice(a, b);
+  pre.appendChild(mark);
+  pre.appendChild(document.createTextNode(text.slice(b)));
 }
 (function(){
   const d = document.getElementById('content-modal');
   if(!d) return;
   d.querySelector('.tm-close').addEventListener('click', ()=> d.close());
   d.addEventListener('click', (e)=>{ if(e.target === d) d.close(); });
-  d.querySelectorAll('.tm-views button').forEach(b => b.addEventListener('click', ()=>{
-    CM_VIEW = b.dataset.view; renderContentModal();
-  }));
-  // Taste r wechselt die Ansicht, solange das Modal offen ist
-  d.addEventListener('keydown', (e)=>{
-    if(e.key === 'r' && !e.metaKey && !e.ctrlKey){ e.preventDefault(); CM_VIEW = CM_VIEW === 'raw' ? 'render' : 'raw'; renderContentModal(); }
-  });
 })();
 
 // Token je Werkzeug und System-Block: der Server misst über count_tokens,
