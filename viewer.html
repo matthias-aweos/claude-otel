@@ -336,8 +336,9 @@
     transition:border-color .15s;cursor:pointer;
   }
   .tool-chip:hover{border-color:var(--tool)}
-  .tool-chip .tn{font-size:11.5px;color:var(--tool);letter-spacing:.02em;display:flex;justify-content:space-between;gap:8px}
-  .tool-chip .tn small{color:var(--paper-mute)}
+  .tool-chip .tn{font-size:11.5px;color:var(--tool);letter-spacing:.02em}
+  .tool-chip .tk{font-size:10.5px;color:var(--paper-mute);font-variant-numeric:tabular-nums}
+  .tool-chip .tk b{color:var(--paper);font-weight:normal}
 
   /* Werkzeug-Modal: vollständige Beschreibung und Eingabeschema */
   #tool-modal{
@@ -1346,7 +1347,8 @@ function renderDoc(){
           <div class="tools-grid">
             ${first.tools.map((t,i)=>`
               <div class="tool-chip" data-tool="${i}" title="Klick: vollständige Beschreibung und Schema">
-                <div class="tn"><span>${escHtml(t.name||'?')}</span><small data-tok-tool="${i}">${fmt.k(JSON.stringify(t).length)} chars</small></div>
+                <div class="tn">${escHtml(t.name||'?')}</div>
+                <div class="tk" data-tok-tool="${i}">${fmt.k(JSON.stringify(t).length)} chars</div>
                 <div class="td">${escHtml((t.description||'').slice(0,160))}</div>
               </div>`).join('')}
           </div>
@@ -1895,7 +1897,7 @@ async function ladeTokens(first, inner){
   setMeta('[data-tok="tools"]', fmt.k(r.werkzeuge_summe) + ' tk gesamt · ' + (r.aufrufe ? r.aufrufe + ' neu gemessen' : 'aus der Ablage'));
   r.werkzeuge.forEach((w, i)=>{
     const el = inner.querySelector(`[data-tok-tool="${i}"]`);
-    if(el) el.textContent = fmt.n(w.token) + ' tk · ' + fmt.k(JSON.stringify(tools[i]).length) + ' chars';
+    if(el) el.innerHTML = '<b>' + fmt.n(w.token) + ' tk</b> · ' + fmt.k(JSON.stringify(tools[i]).length) + ' chars';
   });
 }
 
