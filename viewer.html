@@ -1327,7 +1327,7 @@ function renderHeader(){
   document.getElementById('s-in').innerHTML  = fmt.k(inT) + '<small>tk</small>';
   document.getElementById('s-out').innerHTML = fmt.k(outT) + '<small>tk</small>';
   document.getElementById('s-cache').innerHTML = fmt.k(crT) + '<small>tk</small>';
-  document.getElementById('s-cost').innerHTML = fmt.$(cost).replace('$','$<small>')+'</small>';
+  document.getElementById('s-cost').innerHTML = fmt.$(cost).replace('$','') + '<small>usd</small>';
   document.getElementById('s-span').textContent = span;
   document.getElementById('side-name').textContent = d.dirName;
   const sp = document.getElementById('side-project');
