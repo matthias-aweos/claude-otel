@@ -247,9 +247,16 @@
   }
 
   .turns{padding:8px 0;flex:1}
+  .side-turn > summary{list-style:none;cursor:pointer}
+  .side-turn > summary::-webkit-details-marker{display:none}
+  .side-turn > summary .sg-caret{font-size:8px;transition:transform .15s}
+  .side-turn[open] > summary .sg-caret{transform:rotate(90deg)}
+  .side-turn > summary:hover{background:var(--accent-tint)}
+  .ti-line{display:flex;gap:10px;align-items:baseline;min-width:0;font-size:10px}
+  .ti-line .ti-time{margin:0;font-size:10px;color:var(--paper-2)}
   .turn-item{
-    display:grid;grid-template-columns:36px 1fr;
-    gap:12px;padding:11px 22px;cursor:pointer;
+    display:grid;grid-template-columns:28px 1fr;
+    gap:10px;padding:5px 14px 5px 30px;cursor:pointer;
     border-left:2px solid transparent;
     transition:background .15s,border-color .15s;
     position:relative;
@@ -263,7 +270,7 @@
   .turn-item.hidden{display:none}
   .ti-num{
     font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif;
-    font-size:24px;color:var(--paper-dim);line-height:1;
+    font-size:14px;color:var(--paper-dim);line-height:1.2;
     align-self:start;text-align:right;letter-spacing:-.01em;
   }
   .ti-body{display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -341,33 +348,38 @@
   .tool-chip .tk b{color:var(--paper);font-weight:normal}
 
   /* Werkzeug-Modal: vollständige Beschreibung und Eingabeschema */
-  #tool-modal{
+  dialog.modal{
     border:1px solid var(--rule-bright);background:var(--ink);color:var(--paper);
     width:min(960px,92vw);max-height:88vh;padding:0;margin:auto;
   }
-  #tool-modal::backdrop{background:rgba(0,0,0,.55)}
-  #tool-modal .tm-head{
+  dialog.modal::backdrop{background:rgba(0,0,0,.55)}
+  dialog.modal .tm-head{
     display:flex;justify-content:space-between;align-items:baseline;gap:16px;
     padding:14px 20px;border-bottom:1px solid var(--rule-bright);
     position:sticky;top:0;background:var(--ink);
   }
-  #tool-modal .tm-name{font-size:15px;color:var(--tool);letter-spacing:.02em}
-  #tool-modal .tm-meta{font-size:11px;color:var(--paper-mute)}
-  #tool-modal .tm-close{
+  dialog.modal .tm-name{font-size:15px;color:var(--tool);letter-spacing:.02em}
+  dialog.modal .tm-meta{font-size:11px;color:var(--paper-mute)}
+  dialog.modal .tm-close{
     border:1px solid var(--rule-bright);background:none;color:var(--paper);
     font:inherit;font-size:11px;padding:4px 10px;cursor:pointer;
   }
-  #tool-modal .tm-close:hover{border-color:var(--tool)}
-  #tool-modal .tm-body{padding:16px 20px 20px;overflow-y:auto;max-height:calc(88vh - 60px)}
-  #tool-modal h4{
+  dialog.modal .tm-close:hover{border-color:var(--tool)}
+  dialog.modal .tm-body{padding:16px 20px 20px;overflow-y:auto;max-height:calc(88vh - 60px)}
+  dialog.modal h4{
     margin:0 0 8px;font-size:10.5px;font-weight:normal;letter-spacing:.08em;
     text-transform:uppercase;color:var(--paper-mute);
   }
-  #tool-modal .tm-desc{
+  dialog.modal .tm-desc{
     font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
     margin-bottom:20px;
   }
-  #tool-modal .tm-schema{
+  dialog.modal .cm-content{font-size:12.5px;line-height:1.65}
+  dialog.modal .cm-content .toolcall-body pre,dialog.modal .cm-content .toolresult pre{max-height:none}
+  /* Blatt: sieht aus wie ein Klappblock, öffnet aber das Modal */
+  .acc.leaf > summary .ac-caret{color:var(--paper-mute)}
+  .acc.leaf > summary:hover .ac-caret{color:var(--paper)}
+  dialog.modal .tm-schema{
     font-size:11.5px;line-height:1.5;white-space:pre;overflow-x:auto;
     color:var(--paper-mute);border-top:1px solid var(--rule-bright);padding-top:12px;
   }
@@ -1175,28 +1187,30 @@ function classifyTag(t){
 function makeTagBlock(tag, inner){
   const det = document.createElement('details');
   det.className = 'tagblock ' + classifyTag(tag);
-  if(inner.length <= 220) det.open = true;
   const sum = document.createElement('summary');
   const previewSrc = inner.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
   const preview = previewSrc.slice(0,80) + (previewSrc.length>80?'…':'');
-  sum.innerHTML = `<span class="tg-caret">▸</span><span class="tg-name">&lt;${escHtml(tag)}&gt;</span><span class="tg-preview">${escHtml(preview)}</span><span class="tg-len">${fmt.k(inner.length)}</span>`;
-  det.appendChild(sum);
-  const body = document.createElement('div');
-  body.className = 'tagblock-body';
   const secs = splitFileSections(inner);
+  sum.innerHTML = `<span class="tg-caret">${secs?'▸':'↗'}</span><span class="tg-name">&lt;${escHtml(tag)}&gt;</span><span class="tg-preview">${escHtml(preview)}</span><span class="tg-len">${fmt.k(inner.length)}</span>`;
+  det.appendChild(sum);
   if(secs){
-    // Anweisungskette: je Datei ein eigener Klappblock
+    // Anweisungskette: Zweig mit einem Blatt je Datei
+    const body = document.createElement('div');
+    body.className = 'tagblock-body';
     secs.forEach(sec => {
       if(sec.kind === 'pre'){ body.appendChild(mdRender(sec.text)); return; }
       const shown = sec.path.replace(/^\/Users\/[^/]+/, '~');
-      const {det: fd, body: fb} = makeAcc('blk file', shown, sec.note, previewOf(sec.text, 120), sec.text.length, false);
-      fb.appendChild(taggedRender(sec.text));
-      body.appendChild(fd);
+      body.appendChild(makeLeaf('blk file', shown, sec.note, previewOf(sec.text, 120), sec.text.length,
+        ()=> wrapText(taggedRender(sec.text))));
     });
+    det.appendChild(body);
   } else {
-    body.appendChild(taggedRender(inner));
+    // Blatt: Inhalt im Modal
+    sum.addEventListener('click', (e)=>{
+      e.preventDefault();
+      openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)));
+    });
   }
-  det.appendChild(body);
   return det;
 }
 
@@ -1418,12 +1432,23 @@ function renderSidebar(){
   list.innerHTML = '';
   S.groups = groupTurns(S.data.turns);
   document.getElementById('s-turns').innerHTML = S.groups.length + '<small>' + S.data.turns.length + ' req</small>';
-  S.groups.forEach(g=>{
-    const h = document.createElement('div');
-    h.className = 'side-group';
-    h.innerHTML = `<span>Turn ${g.nr}</span><span class="sg-title" title="${escHtml(g.title)}">${escHtml(g.title)}</span><span>${g.idxs.length}</span>`;
-    list.appendChild(h);
-    g.idxs.forEach(i=> list.appendChild(sidebarItem(S.data.turns[i], i)));
+  S.groups.forEach((g, gi)=>{
+    const det = document.createElement('details');
+    det.className = 'side-turn';
+    det.id = 'side-group-' + g.nr;
+    det.setAttribute('name', 'side-turn');
+    if(gi === 0) det.open = true;
+    const sum = document.createElement('summary');
+    sum.className = 'side-group';
+    sum.innerHTML = `<span class="sg-caret">▸</span><span>Turn ${g.nr}</span><span class="sg-title" title="${escHtml(g.title)}">${escHtml(g.title)}</span><span>${g.idxs.length}</span>`;
+    sum.addEventListener('click', ()=>{
+      // Turn im Dokument öffnen und hinspringen
+      const grp = document.getElementById('group-' + g.nr);
+      if(grp){ grp.open = true; grp.scrollIntoView({behavior:'smooth', block:'start'}); }
+    });
+    det.appendChild(sum);
+    g.idxs.forEach(i=> det.appendChild(sidebarItem(S.data.turns[i], i)));
+    list.appendChild(det);
   });
 }
 
@@ -1441,17 +1466,18 @@ function sidebarItem(t, i){
     el.className = 'turn-item' + (i===S.current?' active':'');
     el.dataset.idx = i;
     el.dataset.search = (model + ' ' + JSON.stringify(t.req?.body?.messages?.slice(-1) || '')).toLowerCase();
+    el.title = shortModel(model);
     el.innerHTML = `
       <div class="ti-num">${String(i+1).padStart(2,'0')}</div>
-      <div class="ti-body">
-        <div class="ti-model">${escHtml(shortModel(model))}${t.internal?' <span class="ti-int">intern</span>':''}</div>
-        <div class="ti-meta">
+      <div class="ti-line">
+        <span class="ti-time">${fmt.time(ts)}</span>
+        <span class="ti-meta">
           <span class="in">▸ ${fmt.k(inT)}</span>
           <span class="out">◂ ${fmt.k(outT)}</span>
           ${tools?`<span class="tools">⚒ ${tools}</span>`:''}
           ${isErr?`<span class="err">✕ err</span>`:''}
-        </div>
-        <div class="ti-time">${fmt.time(ts)}</div>
+        </span>
+        ${t.internal?'<span class="ti-int">intern</span>':''}
       </div>`;
     el.addEventListener('click', ()=> selectTurn(i));
     return el;
@@ -1738,6 +1764,20 @@ function makeAcc(cls, name, meta, preview, len, open){
   return {det, body};
 }
 
+// Blatt: Zeile im Baum ohne eigenen Körper; Klick öffnet den Inhalt im Modal.
+// build() liefert den Inhalt erst beim Öffnen (große Texte werden nicht vorab gerendert).
+function makeLeaf(cls, name, meta, preview, len, build){
+  const {det} = makeAcc(cls + ' leaf', name, meta, preview, len, false);
+  const sum = det.querySelector('summary');
+  sum.querySelector('.ac-caret').textContent = '↗';
+  sum.addEventListener('click', (e)=>{
+    e.preventDefault(); // nicht aufklappen
+    openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build);
+  });
+  return det;
+}
+const hasTags = (t)=> /<[A-Za-z][A-Za-z0-9_-]*>[\s\S]*?<\/[A-Za-z][A-Za-z0-9_-]*>/.test(t||'');
+
 // Eine Nachricht (user/assistant/system) als Rollen-Klappblock
 function renderMessage(m, parent){
   const blocks = contentBlocks(m.content);
@@ -1752,55 +1792,54 @@ function renderMessage(m, parent){
 
 function renderMessageContent(content, parent, asUser){
   const blocks = contentBlocks(content);
+  const kind = asUser ? 'user' : 'asst';
   for(const b of blocks){
     const txt = blockText(b);
     if(b.type==='text'){
-      const {det, body} = makeAcc('blk '+(asUser?'user':'asst'), 'text', null, previewOf(txt, 120), txt.length, false);
       const secs = splitContextSections(txt);
       if(secs){
-        // Dynamischer Kontext von Claude Code (Hook-Ausgaben, Tool-/Agent-/Skill-Listen …): je Abschnitt ein Klappblock
-        secs.forEach(sec => {
-          const {det: sd, body: sb} = makeAcc('blk ctx', sec.title, null, previewOf(sec.text, 120), sec.text.length, false);
-          const div = document.createElement('div');
-          div.className='block text';
-          div.appendChild(renderTextSmart(sec.text, asUser?'user':'asst'));
-          sb.appendChild(div);
-          body.appendChild(sd);
-        });
+        // Dynamischer Kontext von Claude Code: Zweig mit einem Blatt je Abschnitt
+        const {det, body} = makeAcc('blk '+kind, 'text', secs.length + ' sections', previewOf(txt, 120), txt.length, false);
+        secs.forEach(sec => body.appendChild(
+          makeLeaf('blk ctx', sec.title, null, previewOf(sec.text, 120), sec.text.length,
+            ()=> wrapText(renderTextSmart(sec.text, kind)))));
+        parent.appendChild(det);
+      } else if(asUser && hasTags(txt)){
+        // Text mit XML-Tags (system-reminder …): Zweig, die Tag-Blöcke darin sind Blätter oder Zweige
+        const {det, body} = makeAcc('blk '+kind, 'text', null, previewOf(txt, 120), txt.length, false);
+        body.appendChild(taggedRender(txt));
+        parent.appendChild(det);
       } else {
-        const div = document.createElement('div');
-        div.className='block text';
-        div.appendChild(renderTextSmart(txt, asUser?'user':'asst'));
-        body.appendChild(div);
+        parent.appendChild(makeLeaf('blk '+kind, 'text', null, previewOf(txt, 120), txt.length,
+          ()=> wrapText(renderTextSmart(txt, kind))));
       }
-      parent.appendChild(det);
     } else if(b.type==='thinking' || b.type==='redacted_thinking'){
-      const {det, body} = makeAcc('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, false);
-      const div = document.createElement('div');
-      div.className='think';
-      div.appendChild(renderTextSmart(txt || '<redacted>', 'asst'));
-      body.appendChild(div);
-      parent.appendChild(det);
+      parent.appendChild(makeLeaf('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, ()=>{
+        const div = document.createElement('div');
+        div.className='think';
+        div.appendChild(renderTextSmart(txt || '<redacted>', 'asst'));
+        return div;
+      }));
     } else if(b.type==='tool_use'){
       const inp = b.input||{};
       const pv = inp.description || inp.command || inp.file_path || inp.pattern || inp.prompt || inp.query || txt;
-      const {det, body} = makeAcc('blk tool', '▸▸ '+(b.name||'tool_use'), (b.id||'').slice(-12), previewOf(pv, 120), txt.length, false);
-      const wrap = document.createElement('div');
-      wrap.className='toolcall';
-      wrap.innerHTML = `<div class="toolcall-body"><pre>${jsonHl(inp)}</pre></div>`;
-      body.appendChild(wrap);
-      parent.appendChild(det);
+      parent.appendChild(makeLeaf('blk tool', '▸▸ '+(b.name||'tool_use'), (b.id||'').slice(-12), previewOf(pv, 120), txt.length, ()=>{
+        const wrap = document.createElement('div');
+        wrap.className='toolcall';
+        wrap.innerHTML = `<div class="toolcall-body"><pre>${jsonHl(inp)}</pre></div>`;
+        return wrap;
+      }));
     } else if(b.type==='tool_result'){
       const isErr = b.is_error;
-      const {det, body} = makeAcc('blk '+(isErr?'err':'tool'), '◂◂ tool_result'+(isErr?' · error':''), (b.tool_use_id||'').slice(-12), previewOf(txt, 120), txt.length, false);
-      const out = document.createElement('div');
-      out.className='toolresult'+(isErr?' err':'');
-      const rb = document.createElement('div');
-      rb.className='toolresult-body';
-      rb.appendChild(renderTextSmart(txt,'user'));
-      out.appendChild(rb);
-      body.appendChild(out);
-      parent.appendChild(det);
+      parent.appendChild(makeLeaf('blk '+(isErr?'err':'tool'), '◂◂ tool_result'+(isErr?' · error':''), (b.tool_use_id||'').slice(-12), previewOf(txt, 120), txt.length, ()=>{
+        const out = document.createElement('div');
+        out.className='toolresult'+(isErr?' err':'');
+        const rb = document.createElement('div');
+        rb.className='toolresult-body';
+        rb.appendChild(renderTextSmart(txt,'user'));
+        out.appendChild(rb);
+        return out;
+      }));
     } else {
       const div = document.createElement('div');
       div.className='block text';
@@ -1810,12 +1849,19 @@ function renderMessageContent(content, parent, asUser){
     }
   }
 }
+function wrapText(frag){
+  const div = document.createElement('div');
+  div.className='block text';
+  div.appendChild(frag);
+  return div;
+}
 
 /* ───────────────── INTERACTION ───────────────── */
 function selectTurn(i){
   S.current = i;
   document.querySelectorAll('.turn-item').forEach((el,idx)=>{
     el.classList.toggle('active', idx===i);
+    if(idx===i){ const st = el.closest('details.side-turn'); if(st) st.open = true; }
   });
   const el = document.getElementById('turn-'+i);
   if(el){
@@ -1835,6 +1881,10 @@ document.addEventListener('toggle', (e) => {
   if(!d.closest('#doc-inner')) return;
   for(const sib of d.parentElement.children){
     if(sib !== d && sib.tagName === 'DETAILS' && sib.open) sib.open = false;
+  }
+  if(d.classList.contains('turn-group')){
+    const st = document.getElementById('side-' + d.id);
+    if(st) st.open = true;
   }
 }, true);
 
@@ -2131,7 +2181,7 @@ async function bootServer(){
   if(mode === 'server') bootServer();
 })();
 </script>
-<dialog id="tool-modal">
+<dialog id="tool-modal" class="modal">
   <div class="tm-head">
     <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
     <button class="tm-close" type="button">schließen · esc</button>
@@ -2143,7 +2193,33 @@ async function bootServer(){
     <div class="tm-schema"></div>
   </div>
 </dialog>
+<dialog id="content-modal" class="modal">
+  <div class="tm-head">
+    <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
+    <button class="tm-close" type="button">schließen · esc</button>
+  </div>
+  <div class="tm-body"><div class="cm-content"></div></div>
+</dialog>
 <script>
+// Inhalts-Modal: zeigt den Text eines Blatts (Datei, Abschnitt, Block, Werkzeugaufruf …).
+function openContentModal(title, meta, build){
+  const d = document.getElementById('content-modal');
+  if(!d) return;
+  d.querySelector('.tm-name').textContent = title;
+  d.querySelector('.tm-meta').textContent = meta || '';
+  const c = d.querySelector('.cm-content');
+  c.innerHTML = '';
+  c.appendChild(build());
+  d.querySelector('.tm-body').scrollTop = 0;
+  d.showModal();
+}
+(function(){
+  const d = document.getElementById('content-modal');
+  if(!d) return;
+  d.querySelector('.tm-close').addEventListener('click', ()=> d.close());
+  d.addEventListener('click', (e)=>{ if(e.target === d) d.close(); });
+})();
+
 // Token je Werkzeug und System-Block: der Server misst über count_tokens,
 // was für dieses Modell noch fehlt, und liefert alles zurück (POST /api/tokens).
 let TOKENS = null;
