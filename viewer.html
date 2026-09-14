@@ -979,14 +979,24 @@
 /* ───────────────── PRICING (rough, USD per million tokens) ─────────────────
  * Used only for an approximate cost line. Keep updated as needed.
  */
+// USD je Million Token, Quelle: platform.claude.com/docs/en/about-claude/pricing (Stand 2026-09-14)
+// [input, output, cacheRead, cacheWrite5m, cacheWrite1h]; Reihenfolge = Suchreihenfolge,
+// spezifische Fragmente vor allgemeinen (z. B. fable-5-1 vor fable).
 const PRICING = {
-  // model fragment match → [input, output, cacheRead, cacheWrite]
-  'opus-4':       [15.00, 75.00, 1.50, 18.75],
-  'sonnet-4':     [ 3.00, 15.00, 0.30,  3.75],
-  'haiku-4':      [ 1.00,  5.00, 0.10,  1.25],
-  'opus-3':       [15.00, 75.00, 1.50, 18.75],
-  'sonnet-3':     [ 3.00, 15.00, 0.30,  3.75],
-  'haiku-3':      [ 0.80,  4.00, 0.08,  1.00],
+  'fable-5-1':    [10.00, 50.00, 0.25, 12.50, 20.00], // Cache-Lesen 0,025x
+  'mythos-5-1':   [10.00, 50.00, 0.25, 12.50, 20.00],
+  'fable':        [10.00, 50.00, 1.00, 12.50, 20.00], // Fable 5: Cache-Lesen 0,1x
+  'mythos':       [10.00, 50.00, 1.00, 12.50, 20.00],
+  'opus-5':       [ 5.00, 25.00, 0.50,  6.25, 10.00],
+  'opus-4-1':     [15.00, 75.00, 1.50, 18.75, 30.00], // Opus 4.1 (retired)
+  'opus-4-2025':  [15.00, 75.00, 1.50, 18.75, 30.00], // Opus 4 (retired)
+  'opus-4':       [ 5.00, 25.00, 0.50,  6.25, 10.00], // Opus 4.5 bis 4.8
+  'sonnet-5':     [ 2.00, 10.00, 0.20,  2.50,  4.00],
+  'sonnet-4':     [ 3.00, 15.00, 0.30,  3.75,  6.00],
+  'haiku-4':      [ 1.00,  5.00, 0.10,  1.25,  2.00],
+  'opus-3':       [15.00, 75.00, 1.50, 18.75, 30.00],
+  'sonnet-3':     [ 3.00, 15.00, 0.30,  3.75,  6.00],
+  'haiku-3':      [ 0.80,  4.00, 0.08,  1.00,  1.60],
 };
 function priceFor(model){
   if(!model) return null;
@@ -999,8 +1009,14 @@ function costOf(model, usage){
   const i  = usage.input_tokens || 0;
   const o  = usage.output_tokens || 0;
   const cr = usage.cache_read_input_tokens || 0;
-  const cw = usage.cache_creation_input_tokens || 0;
-  return (i*p[0] + o*p[1] + cr*p[2] + cw*p[3]) / 1e6;
+  // Cache-Schreiben: 5-Minuten- und 1-Stunden-Anteil getrennt, wenn die Antwort sie ausweist
+  // (Claude Code schreibt mit 1h-TTL); sonst alles zum 5-Minuten-Preis.
+  const cc = usage.cache_creation || {};
+  const cw5 = cc.ephemeral_5m_input_tokens, cw1 = cc.ephemeral_1h_input_tokens;
+  const hasSplit = cw5!=null || cw1!=null;
+  const cwAll = usage.cache_creation_input_tokens || 0;
+  const cwCost = hasSplit ? ((cw5||0)*p[3] + (cw1||0)*p[4]) : cwAll*p[3];
+  return (i*p[0] + o*p[1] + cr*p[2] + cwCost) / 1e6;
 }
 
 /* ───────────────── FORMATTING ───────────────── */
