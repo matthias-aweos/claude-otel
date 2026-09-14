@@ -601,6 +601,34 @@
   .md strong{color:var(--paper);font-weight:700}
   .md em{color:var(--paper-2)}
 
+  /* ──────── AKKORDEON: Rollen- und Inhaltsblöcke ──────── */
+  .acc{margin:10px 0;border-left:2px solid var(--rule-bright)}
+  .acc > summary{
+    list-style:none;cursor:pointer;min-width:0;
+    display:flex;align-items:center;gap:10px;
+    padding:6px 10px;font-size:10.5px;transition:background .15s;
+  }
+  .acc > summary::-webkit-details-marker{display:none}
+  .acc > summary:hover{background:var(--surface-tint)}
+  .acc > summary .ac-caret{font-size:8px;width:8px;color:var(--paper-mute);transition:transform .15s;flex-shrink:0}
+  .acc[open] > summary .ac-caret{transform:rotate(90deg)}
+  .acc > summary .ac-name{font-size:9px;letter-spacing:.32em;text-transform:uppercase;font-weight:500;flex-shrink:0}
+  .acc > summary .ac-meta{color:var(--paper-mute);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .acc > summary .ac-preview{color:var(--paper-dim);flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .acc > summary .ac-len{color:var(--paper-mute);flex-shrink:0;font-variant-numeric:tabular-nums}
+  .acc[open] > summary{border-bottom:1px dashed var(--rule-bright)}
+  .acc-body{padding:4px 0 6px 12px}
+  .acc.user{border-color:var(--cyan)}   .acc.user  > summary .ac-name{color:var(--cyan)}
+  .acc.asst{border-color:var(--amber)}  .acc.asst  > summary .ac-name{color:var(--amber)}
+  .acc.sys{border-color:var(--red)}     .acc.sys   > summary .ac-name{color:var(--red)}
+  .acc.think{border-color:var(--violet)}.acc.think > summary .ac-name{color:var(--violet)}
+  .acc.tool{border-color:var(--tool)}   .acc.tool  > summary .ac-name{color:var(--tool)}
+  .acc.err{border-color:var(--red)}     .acc.err   > summary .ac-name{color:var(--red)}
+  .acc.blk{margin:6px 0;border-left-width:1px}
+  .acc.blk > summary{padding:4px 10px}
+  .acc.blk > summary .ac-name{letter-spacing:.12em;text-transform:none}
+  .acc.blk .toolcall,.acc.blk .toolresult{border:0;margin:0}
+
   /* ──────── XML / TAG BLOCKS ──────── */
   .tagblock{
     margin:6px 0;border-left:2px solid var(--rule-bright);
@@ -1415,22 +1443,13 @@ function renderTurn(t, i){
     hist.appendChild(hsum);
     const hbody = document.createElement('div');
     hbody.className = 'history-body';
-    history.forEach(m => {
-      const wrap = document.createElement('div');
-      wrap.className = 'history-msg';
-      wrap.appendChild(roleHead(roleClass(m.role), m.role.toUpperCase()));
-      renderMessageContent(m.content, wrap, m.role==='user');
-      hbody.appendChild(wrap);
-    });
+    history.forEach(m => renderMessage(m, hbody));
     hist.appendChild(hbody);
     sec.appendChild(hist);
   }
 
   // Neue Eingabe: letzte User-Nachricht und alles, was danach noch im Request steht
-  messages.slice(lastUserIdx).forEach(m => {
-    sec.appendChild(roleHead(roleClass(m.role), m.role.toUpperCase()));
-    renderMessageContent(m.content, sec, /*asUser=*/m.role==='user');
-  });
+  messages.slice(lastUserIdx).forEach(m => renderMessage(m, sec));
 
   // assistant response
   if(t.resp){
@@ -1442,8 +1461,7 @@ function renderTurn(t, i){
       div.textContent = JSON.stringify(t.resp.body.error || t.resp.body, null, 2);
       sec.appendChild(div);
     } else {
-      sec.appendChild(roleHead('asst','ASSISTANT'));
-      renderMessageContent(t.resp.body.content || [], sec, false);
+      renderMessage({role:'assistant', content: t.resp.body.content || []}, sec);
     }
   }
 
@@ -1505,54 +1523,96 @@ function roleHead(cls,label){
   return el;
 }
 
+// Textinhalt eines Inhaltsblocks (für Zeichenzahl und Vorschau)
+function resultText(c){
+  if(typeof c==='string') return c;
+  if(Array.isArray(c)) return c.map(x=> x.type==='text'?x.text:JSON.stringify(x,null,2)).join('\n');
+  return JSON.stringify(c,null,2);
+}
+function blockText(b){
+  if(b.type==='text') return b.text||'';
+  if(b.type==='thinking') return b.thinking||'';
+  if(b.type==='redacted_thinking') return '';
+  if(b.type==='tool_use') return JSON.stringify(b.input||{});
+  if(b.type==='tool_result') return resultText(b.content);
+  return JSON.stringify(b);
+}
+function previewOf(text, n){
+  const t = (text||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  return t.slice(0,n) + (t.length>n?'…':'');
+}
+function contentBlocks(content){
+  if(typeof content==='string') return [{type:'text', text:content}];
+  return Array.isArray(content) ? content : [content];
+}
+
+// Klappblock: <details> mit Kopfzeile (Name, Meta, Vorschau, Länge) und Körper
+function makeAcc(cls, name, meta, preview, len, open){
+  const det = document.createElement('details');
+  det.className = 'acc ' + cls;
+  if(open) det.open = true;
+  const sum = document.createElement('summary');
+  sum.innerHTML = `<span class="ac-caret">▸</span><span class="ac-name">${escHtml(name)}</span>`
+    + (meta ? `<span class="ac-meta">${escHtml(meta)}</span>` : '')
+    + `<span class="ac-preview">${escHtml(preview||'')}</span>`
+    + (len!=null ? `<span class="ac-len">${fmt.k(len)} chars</span>` : '');
+  det.appendChild(sum);
+  const body = document.createElement('div');
+  body.className = 'acc-body';
+  det.appendChild(body);
+  return {det, body};
+}
+
+// Eine Nachricht (user/assistant/system) als Rollen-Klappblock
+function renderMessage(m, parent){
+  const blocks = contentBlocks(m.content);
+  const chars = blocks.reduce((a,b)=> a + blockText(b).length, 0);
+  const first = blocks.find(b => blockText(b).trim().length > 0);
+  const {det, body} = makeAcc(roleClass(m.role), m.role.toUpperCase(),
+    `${blocks.length} block${blocks.length===1?'':'s'}`,
+    first ? previewOf(blockText(first), 110) : '', chars, false);
+  renderMessageContent(m.content, body, m.role==='user');
+  parent.appendChild(det);
+}
+
 function renderMessageContent(content, parent, asUser){
-  if(typeof content === 'string'){
-    const div = document.createElement('div');
-    div.className='block text';
-    div.textContent = content;
-    parent.appendChild(div);
-    return;
-  }
-  const blocks = Array.isArray(content) ? content : [content];
+  const blocks = contentBlocks(content);
   for(const b of blocks){
+    const txt = blockText(b);
     if(b.type==='text'){
+      const {det, body} = makeAcc('blk '+(asUser?'user':'asst'), 'text', null, previewOf(txt, 120), txt.length, false);
       const div = document.createElement('div');
       div.className='block text';
-      div.appendChild(renderTextSmart(b.text||'', asUser?'user':'asst'));
-      parent.appendChild(div);
+      div.appendChild(renderTextSmart(txt, asUser?'user':'asst'));
+      body.appendChild(div);
+      parent.appendChild(det);
     } else if(b.type==='thinking' || b.type==='redacted_thinking'){
-      parent.appendChild(roleHead('think','THINKING'));
+      const {det, body} = makeAcc('blk think', 'thinking', null, previewOf(txt || '<redacted>', 120), txt.length, false);
       const div = document.createElement('div');
       div.className='think';
-      div.appendChild(renderTextSmart(b.thinking || b.text || '<redacted>', 'asst'));
-      parent.appendChild(div);
+      div.appendChild(renderTextSmart(txt || '<redacted>', 'asst'));
+      body.appendChild(div);
+      parent.appendChild(det);
     } else if(b.type==='tool_use'){
+      const inp = b.input||{};
+      const pv = inp.description || inp.command || inp.file_path || inp.pattern || inp.prompt || inp.query || txt;
+      const {det, body} = makeAcc('blk tool', '▸▸ '+(b.name||'tool_use'), (b.id||'').slice(-12), previewOf(pv, 120), txt.length, false);
       const wrap = document.createElement('div');
       wrap.className='toolcall';
-      wrap.innerHTML = `
-        <div class="toolcall-head">
-          <span class="toolcall-arrow">▸▸</span>
-          <span class="toolcall-name">${escHtml(b.name)}</span>
-          <span class="toolcall-id">${escHtml((b.id||'').slice(-12))}</span>
-        </div>
-        <div class="toolcall-body"><pre>${jsonHl(b.input||{})}</pre></div>`;
-      parent.appendChild(wrap);
+      wrap.innerHTML = `<div class="toolcall-body"><pre>${jsonHl(inp)}</pre></div>`;
+      body.appendChild(wrap);
+      parent.appendChild(det);
     } else if(b.type==='tool_result'){
       const isErr = b.is_error;
+      const {det, body} = makeAcc('blk '+(isErr?'err':'tool'), '◂◂ tool_result'+(isErr?' · error':''), (b.tool_use_id||'').slice(-12), previewOf(txt, 120), txt.length, false);
       const out = document.createElement('div');
       out.className='toolresult'+(isErr?' err':'');
-      const content = typeof b.content==='string' ? b.content
-        : Array.isArray(b.content) ? b.content.map(x=> x.type==='text'?x.text:JSON.stringify(x,null,2)).join('\n')
-        : JSON.stringify(b.content,null,2);
-      const head = document.createElement('div');
-      head.className='toolresult-head';
-      head.innerHTML = `◂◂ tool_result · ${escHtml((b.tool_use_id||'').slice(-12))} ${isErr?'· error':''}`;
-      out.appendChild(head);
-      const body = document.createElement('div');
-      body.className='toolresult-body';
-      body.appendChild(renderTextSmart(content,'user'));
-      out.appendChild(body);
-      parent.appendChild(out);
+      const rb = document.createElement('div');
+      rb.className='toolresult-body';
+      rb.appendChild(renderTextSmart(txt,'user'));
+      out.appendChild(rb);
+      body.appendChild(out);
+      parent.appendChild(det);
     } else {
       const div = document.createElement('div');
       div.className='block text';
