@@ -377,6 +377,11 @@
   dialog.modal .cm-content{font-size:12.5px;line-height:1.65}
   dialog.modal .tm-actions{display:flex;gap:14px;align-items:center;flex-shrink:0}
   dialog.modal .tm-where{font-size:10.5px;color:var(--paper-mute);font-variant-numeric:tabular-nums}
+  dialog.modal .tm-nav{display:inline-flex;border:1px solid var(--rule-bright)}
+  dialog.modal .tm-nav button{border:0;background:none;color:var(--paper);font:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
+  dialog.modal .tm-nav button+button{border-left:1px solid var(--rule-bright)}
+  dialog.modal .tm-nav button:hover{background:var(--surface-tint)}
+  dialog.modal .tm-nav button:disabled{color:var(--paper-mute);cursor:default;background:none}
   #content-modal{width:min(1800px,96vw)}
   #content-modal .cm-split{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:0;max-height:calc(88vh - 60px)}
   #content-modal .cm-content{padding:16px 20px 20px;overflow-y:auto;max-height:calc(88vh - 60px)}
@@ -1223,8 +1228,10 @@ function makeTagBlock(tag, inner, loc){
     det.appendChild(body);
   } else {
     // Blatt: Inhalt im Modal
+    det.classList.add('leaf');
     sum.addEventListener('click', (e)=>{
       e.preventDefault();
+      CM_LEAF = sum;
       openContentModal('<'+tag+'>', fmt.n(inner.length) + ' Zeichen', ()=> wrapText(taggedRender(inner)), loc ? {...loc, sub:[loc.tagStart, loc.tagEnd]} : null);
     });
   }
@@ -1791,6 +1798,7 @@ function makeLeaf(cls, name, meta, preview, len, build, loc){
   sum.querySelector('.ac-caret').textContent = '↗';
   sum.addEventListener('click', (e)=>{
     e.preventDefault(); // nicht aufklappen
+    CM_LEAF = sum;
     openContentModal(name, (meta ? meta + ' · ' : '') + fmt.n(len) + ' Zeichen', build, loc);
   });
   return det;
@@ -2224,6 +2232,7 @@ async function bootServer(){
     <div><span class="tm-name"></span> <span class="tm-meta"></span></div>
     <div class="tm-actions">
       <span class="tm-where"></span>
+      <span class="tm-nav"><button type="button" class="tm-prev" title="voriges Element (←)">◀ zurück</button><button type="button" class="tm-next" title="nächstes Element (→)">weiter ▶</button></span>
       <button class="tm-close" type="button">schließen · esc</button>
     </div>
   </div>
@@ -2258,7 +2267,8 @@ function openContentModal(title, meta, build, loc){
     where.textContent = '';
     pre.textContent = '(kein Ort im JSON bekannt)';
   }
-  d.showModal();
+  cmUpdateNav();
+  if(!d.open) d.showModal();
   // erst nach dem Öffnen scrollen, sonst hat die Spalte noch keine Höhe
   const m = pre.querySelector('mark');
   if(m) requestAnimationFrame(()=> m.scrollIntoView({block:'center'}));
@@ -2341,11 +2351,39 @@ function fillJsonPane(pre, loc){
   }
   pre.appendChild(frag);
 }
+// Voriges/nächstes Blatt in Dokumentreihenfolge, über Zweige, Requests und Turns hinweg.
+// Zweige auf dem Weg werden geöffnet, damit der Baum hinter dem Modal mitgeht.
+let CM_LEAF = null;
+function leafSummaries(){ return [...document.querySelectorAll('#doc-inner details.leaf > summary')]; }
+function cmStep(dir){
+  const list = leafSummaries();
+  const i = list.indexOf(CM_LEAF);
+  const n = i < 0 ? null : list[i + dir];
+  if(!n) return;
+  for(let p = n.parentElement; p; p = p.parentElement){
+    if(p.tagName === 'DETAILS' && !p.classList.contains('leaf')) p.open = true;
+  }
+  n.scrollIntoView({block:'center'});
+  n.click();
+}
+function cmUpdateNav(){
+  const d = document.getElementById('content-modal');
+  const list = leafSummaries();
+  const i = list.indexOf(CM_LEAF);
+  d.querySelector('.tm-prev').disabled = i <= 0;
+  d.querySelector('.tm-next').disabled = i < 0 || i >= list.length - 1;
+}
 (function(){
   const d = document.getElementById('content-modal');
   if(!d) return;
   d.querySelector('.tm-close').addEventListener('click', ()=> d.close());
   d.addEventListener('click', (e)=>{ if(e.target === d) d.close(); });
+  d.querySelector('.tm-prev').addEventListener('click', ()=> cmStep(-1));
+  d.querySelector('.tm-next').addEventListener('click', ()=> cmStep(1));
+  d.addEventListener('keydown', (e)=>{
+    if(e.key === 'ArrowLeft'){ e.preventDefault(); cmStep(-1); }
+    else if(e.key === 'ArrowRight'){ e.preventDefault(); cmStep(1); }
+  });
 })();
 
 // Token je Werkzeug und System-Block: der Server misst über count_tokens,
