@@ -419,6 +419,8 @@
   .role.asst .role-bar{background:var(--amber);opacity:.5}
   .role.tool .role-l{color:var(--tool)}
   .role.tool .role-bar{background:var(--tool);opacity:.5}
+  .role.sys .role-l{color:var(--red)}
+  .role.sys .role-bar{background:var(--red);opacity:.5}
   .role.think .role-l{color:var(--violet)}
   .role.think .role-bar{background:var(--violet);opacity:.5}
 
@@ -1399,9 +1401,13 @@ function renderTurn(t, i){
     </div>`;
   sec.appendChild(head);
 
-  // prior context: show all messages except the last one (which is rendered as the new USER block)
-  if(msgsN > 1){
-    const history = messages.slice(0, msgsN - 1);
+  // Neue Eingabe dieses Requests = letzte User-Nachricht plus alles danach
+  // (Claude Code hängt Hook-Ausgaben als Nachrichten der Rolle system an).
+  // Vorgeschichte = alles davor.
+  let lastUserIdx = msgsN - 1;
+  while(lastUserIdx > 0 && messages[lastUserIdx].role !== 'user') lastUserIdx--;
+  if(lastUserIdx > 0){
+    const history = messages.slice(0, lastUserIdx);
     const hist = document.createElement('details');
     hist.className = 'history-block';
     const hsum = document.createElement('summary');
@@ -1412,7 +1418,7 @@ function renderTurn(t, i){
     history.forEach(m => {
       const wrap = document.createElement('div');
       wrap.className = 'history-msg';
-      wrap.appendChild(roleHead(m.role==='user'?'user':'asst', m.role.toUpperCase()));
+      wrap.appendChild(roleHead(roleClass(m.role), m.role.toUpperCase()));
       renderMessageContent(m.content, wrap, m.role==='user');
       hbody.appendChild(wrap);
     });
@@ -1420,18 +1426,11 @@ function renderTurn(t, i){
     sec.appendChild(hist);
   }
 
-  // latest user message (the actual new input for this turn)
-  const lastMsg = messages[msgsN - 1];
-  if(lastMsg && lastMsg.role==='user'){
-    sec.appendChild(roleHead('user','USER'));
-    renderMessageContent(lastMsg.content, sec, /*asUser=*/true);
-  } else {
-    const lastUser = [...messages].reverse().find(m => m.role==='user');
-    if(lastUser){
-      sec.appendChild(roleHead('user','USER'));
-      renderMessageContent(lastUser.content, sec, /*asUser=*/true);
-    }
-  }
+  // Neue Eingabe: letzte User-Nachricht und alles, was danach noch im Request steht
+  messages.slice(lastUserIdx).forEach(m => {
+    sec.appendChild(roleHead(roleClass(m.role), m.role.toUpperCase()));
+    renderMessageContent(m.content, sec, /*asUser=*/m.role==='user');
+  });
 
   // assistant response
   if(t.resp){
@@ -1493,6 +1492,10 @@ function renderTurn(t, i){
   });
 
   return sec;
+}
+
+function roleClass(role){
+  return role==='user' ? 'user' : (role==='assistant' ? 'asst' : 'sys');
 }
 
 function roleHead(cls,label){
