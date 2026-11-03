@@ -129,12 +129,94 @@ function resolveSessionDir(root, slug) {
   return safeJoin(root, session);
 }
 
-function listFiles(dir) {
+// ─────────────── Claude-Code-Sessions innerhalb eines Aufnahmeordners ───────────────
+// Ein Aufnahmeordner gehört zu einem Programmstart. Darin können mehrere Claude-Code-Sessions
+// liegen: `/clear` beginnt eine neue Session mit neuer ID, ohne dass das Programm neu startet.
+// Claude Code schreibt im Dateimodus eine `index.jsonl` mit `session_id`, `request_file` und
+// `response_file` je Anfrage; daraus wird getrennt. Requests, die (noch) nicht im Index stehen,
+// tragen die ID in `metadata.user_id` (JSON-Text mit `session_id`); Responses ohne Eintrag gehören
+// zur letzten Anfrage davor. Ordner mit nur einer Session bleiben unverändert eine Sitzung.
+const SESSION_SEP = '~';
+const _metaCache = new Map(); // Pfad → { mtime, sid }
+
+function sessionIdFromRequest(file) {
+  let st;
+  try { st = fs.statSync(file); } catch { return null; }
+  const hit = _metaCache.get(file);
+  if (hit && hit.mtime === st.mtimeMs) return hit.sid;
+  let sid = null;
+  try {
+    const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const uid = body && body.metadata && body.metadata.user_id;
+    if (typeof uid === 'string') {
+      try { sid = JSON.parse(uid).session_id || null; }
+      catch { const m = uid.match(/session_([0-9a-f-]{36})/i); sid = m ? m[1] : null; }
+    }
+  } catch { /* unvollständig geschrieben: beim nächsten Abruf erneut */ return null; }
+  _metaCache.set(file, { mtime: st.mtimeMs, sid });
+  return sid;
+}
+
+// Map session_id → Set(Dateinamen), oder null, wenn der Ordner nur eine Session enthält.
+function sessionGroups(dir) {
+  // Ohne index.jsonl wird nicht geteilt: Solche Ordner legt prepare-api-bodies schon je Session an,
+  // und ohne Index müsste jede Anfrage gelesen werden (dort oft Hunderte großer Dateien).
+  let index;
+  try { index = fs.readFileSync(path.join(dir, 'index.jsonl'), 'utf8'); } catch { return null; }
+  const owner = new Map(); // Datei → session_id
+  for (const line of index.split('\n')) {
+    if (!line.trim()) continue;
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    if (!e || !e.session_id) continue;
+    if (e.request_file) owner.set(e.request_file, e.session_id);
+    if (e.response_file) owner.set(e.response_file, e.session_id);
+  }
+  const files = listFiles(dir);
+  let lastSid = null;
+  for (const f of files) { // nach mtime sortiert
+    let sid = owner.get(f.name) || null;
+    if (!sid && f.kind === 'request') sid = sessionIdFromRequest(path.join(dir, f.name));
+    if (!sid && f.kind === 'response') sid = lastSid;
+    if (!sid) continue;
+    owner.set(f.name, sid);
+    if (f.kind === 'request') lastSid = sid;
+  }
+  const groups = new Map();
+  for (const f of files) {
+    const sid = owner.get(f.name);
+    if (!sid) continue;
+    if (!groups.has(sid)) groups.set(sid, new Set());
+    groups.get(sid).add(f.name);
+  }
+  return groups.size > 1 ? groups : null;
+}
+
+// Wie resolveSessionDir, versteht zusätzlich `<lauf>~<session_id>`.
+// Liefert { dir, sid } (sid null = ganzer Ordner) oder null.
+function resolveSession(root, slug) {
+  const dir = resolveSessionDir(root, slug);
+  if (dir && fs.existsSync(dir)) return { dir, sid: null };
+  const idx = slug.lastIndexOf(SESSION_SEP);
+  if (idx <= 0) return dir ? { dir, sid: null } : null;
+  const sid = slug.slice(idx + 1);
+  if (!/^[0-9a-f-]{36}$/i.test(sid)) return null;
+  const runDir = resolveSessionDir(root, slug.slice(0, idx));
+  return runDir ? { dir: runDir, sid } : null;
+}
+
+function sessionFilter(dir, sid) {
+  if (!sid) return null;
+  const groups = sessionGroups(dir);
+  return (groups && groups.get(sid)) || new Set();
+}
+
+function listFiles(dir, only = null) {
   const out = [];
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return out; }
   for (const name of entries) {
     if (!name.endsWith('.json')) continue;
+    if (only && !only.has(name)) continue;
     let st;
     try { st = fs.statSync(path.join(dir, name)); } catch { continue; }
     if (!st.isFile()) continue;
@@ -144,20 +226,23 @@ function listFiles(dir) {
   return out;
 }
 
-function summarizeSessionDir(sessionDir, project, projectPath, sessionName) {
-  const files = listFiles(sessionDir);
+function summarizeSessionDir(sessionDir, project, projectPath, sessionName, only = null, sid = null) {
+  const files = listFiles(sessionDir, only);
   if (!files.length) return null;
   const reqs = files.filter(f => f.kind === 'request').length;
   const resps = files.filter(f => f.kind === 'response').length;
   if (!reqs && !resps) return null;
   const mtimes = files.map(f => f.mtime);
-  const id = project ? `${project}/${sessionName}` : sessionName;
+  const name = sid ? `${sessionName}${SESSION_SEP}${sid}` : sessionName;
+  const id = project ? `${project}/${name}` : name;
   return {
     id,
     project,
     projectPath,
     projectLabel: projectPath ? path.basename(projectPath) : (project || ''),
-    name: sessionName,
+    name,
+    title: sid ? `${sessionName} · ${sid.slice(0, 8)}` : sessionName,
+    sessionId: sid,
     turns: Math.max(reqs, resps),
     requests: reqs,
     responses: resps,
@@ -166,6 +251,21 @@ function summarizeSessionDir(sessionDir, project, projectPath, sessionName) {
     last: Math.max(...mtimes),
     size: files.reduce((s, f) => s + f.size, 0),
   };
+}
+
+// Ein Aufnahmeordner → eine Sitzung je Claude-Code-Session darin.
+function summarizeRun(dir, project, projectPath, runName) {
+  const groups = sessionGroups(dir);
+  if (!groups) {
+    const sess = summarizeSessionDir(dir, project, projectPath, runName);
+    return sess ? [sess] : [];
+  }
+  const out = [];
+  for (const [sid, names] of groups) {
+    const sess = summarizeSessionDir(dir, project, projectPath, runName, names, sid);
+    if (sess) out.push(sess);
+  }
+  return out;
 }
 
 function listSessions(root) {
@@ -180,8 +280,7 @@ function listSessions(root) {
 
     if (dirHasSessionFiles(d)) {
       // legacy: session directly under root, no project layer
-      const sess = summarizeSessionDir(d, null, null, name);
-      if (sess) out.push(sess);
+      out.push(...summarizeRun(d, null, null, name));
       continue;
     }
     // project dir: scan one level deeper for sessions
@@ -194,8 +293,7 @@ function listSessions(root) {
       let sst;
       try { sst = fs.statSync(sDir); } catch { continue; }
       if (!sst.isDirectory()) continue;
-      const sess = summarizeSessionDir(sDir, name, projectPath, sName);
-      if (sess) out.push(sess);
+      out.push(...summarizeRun(sDir, name, projectPath, sName));
     }
   }
   out.sort((a, b) => b.last - a.last);
@@ -251,7 +349,8 @@ function handle(req, res, ctx) {
   let m;
   if ((m = p.match(/^\/api\/sessions\/([^/]+)\/files$/))) {
     const slug = decodeURIComponent(m[1]);
-    const dir = resolveSessionDir(ctx.root, slug);
+    const found = resolveSession(ctx.root, slug);
+    const dir = found && found.dir;
     if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return sendJson(res, 404, { error: 'session not found' });
     const { project } = parseSlug(slug);
     let projectPath = null;
@@ -259,10 +358,13 @@ function handle(req, res, ctx) {
       const projDir = safeJoin(ctx.root, project);
       if (projDir) projectPath = readProjectPath(projDir);
     }
-    return sendJson(res, 200, { session: path.basename(dir), project, projectPath, files: listFiles(dir) });
+    const name = found.sid ? `${path.basename(dir)}${SESSION_SEP}${found.sid}` : path.basename(dir);
+    return sendJson(res, 200, { session: name, project, projectPath,
+                                files: listFiles(dir, sessionFilter(dir, found.sid)) });
   }
   if ((m = p.match(/^\/api\/sessions\/([^/]+)\/file\/([^/]+)$/))) {
-    const dir = resolveSessionDir(ctx.root, decodeURIComponent(m[1]));
+    const found = resolveSession(ctx.root, decodeURIComponent(m[1]));
+    const dir = found && found.dir;
     if (!dir) return sendJson(res, 404, { error: 'session not found' });
     const f = safeJoin(dir, decodeURIComponent(m[2]));
     if (!f || !fs.existsSync(f) || !fs.statSync(f).isFile()) return sendJson(res, 404, { error: 'file not found' });
@@ -274,14 +376,15 @@ function handle(req, res, ctx) {
     return fs.createReadStream(f).pipe(res);
   }
   if ((m = p.match(/^\/api\/sessions\/([^/]+)\/events$/))) {
-    const dir = resolveSessionDir(ctx.root, decodeURIComponent(m[1]));
+    const found = resolveSession(ctx.root, decodeURIComponent(m[1]));
+    const dir = found && found.dir;
     if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return sendJson(res, 404, { error: 'session not found' });
-    return sseLoop(req, res, dir);
+    return sseLoop(req, res, dir, 1800, found.sid);
   }
   return sendJson(res, 404, { error: 'not found' });
 }
 
-function sseLoop(req, res, dir, maxSeconds = 1800) {
+function sseLoop(req, res, dir, maxSeconds = 1800, sid = null) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
@@ -290,14 +393,14 @@ function sseLoop(req, res, dir, maxSeconds = 1800) {
   });
   res.write(': connected\n\n');
   const seen = new Map();
-  for (const f of listFiles(dir)) seen.set(f.name, f.mtime);
+  for (const f of listFiles(dir, sessionFilter(dir, sid))) seen.set(f.name, f.mtime);
   const start = Date.now();
   let lastPing = start;
   const tick = setInterval(() => {
     if (req.destroyed || res.destroyed) return done();
     if (Date.now() - start > maxSeconds * 1000) return done();
     const now = Date.now();
-    const current = listFiles(dir);
+    const current = listFiles(dir, sessionFilter(dir, sid));
     const present = new Set();
     const changed = [];
     for (const f of current) {
@@ -498,6 +601,9 @@ export {
   encodeProject,
   parseSlug,
   resolveSessionDir,
+  resolveSession,
+  sessionGroups,
+  listFiles,
   safeJoin,
   classify,
   dirHasSessionFiles,

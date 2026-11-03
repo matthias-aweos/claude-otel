@@ -18,6 +18,9 @@ import {
   dirHasSessionFiles,
   summarizeSessionDir,
   listSessions,
+  resolveSession,
+  sessionGroups,
+  listFiles,
 } from '../bin/claude-otel.mjs';
 
 // ─── parseSlug ──────────────────────────────────────────────────────────
@@ -269,4 +272,114 @@ test('summarizeSessionDir produces id from project + name', () => {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ─── Sessions nach Claude-Code-Session-ID trennen (/clear) ──────────────
+
+const SID_A = 'aaaaaaaa-1111-2222-3333-444444444444';
+const SID_B = 'bbbbbbbb-1111-2222-3333-444444444444';
+
+function meta(sid) {
+  return JSON.stringify({ metadata: { user_id: JSON.stringify({ device_id: 'd', session_id: sid }) } });
+}
+
+// Ein Aufnahmeordner wie nach `/clear`: zwei Sessions, Index nur für die ersten Dateien.
+function runWithClear(root) {
+  const proj = path.join(root, '-Users-iris-foo');
+  const run = path.join(proj, '2026-11-03_test');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(proj, '.project'), '/Users/iris/foo\n');
+  const files = [
+    ['r1.request.json', meta(SID_A)], ['req_1.response.json', '{}'],
+    ['r2.request.json', meta(SID_B)], ['req_2.response.json', '{}'],
+    ['r3.request.json', meta(SID_B)], ['req_3.response.json', '{}'],
+  ];
+  let t = 1_790_000_000;
+  for (const [name, body] of files) {
+    const f = path.join(run, name);
+    fs.writeFileSync(f, body);
+    fs.utimesSync(f, t, t); t += 10;
+  }
+  fs.writeFileSync(path.join(run, 'index.jsonl'), [
+    { session_id: SID_A, request_file: 'r1.request.json', response_file: 'req_1.response.json' },
+    { session_id: SID_B, request_file: 'r2.request.json', response_file: 'req_2.response.json' },
+  ].map(e => JSON.stringify(e)).join('\n') + '\n');
+  return run;
+}
+
+test('sessionGroups trennt nach session_id aus Index und Request-Metadaten', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-'));
+  try {
+    const run = runWithClear(tmp);
+    const groups = sessionGroups(run);
+    assert.deepEqual([...groups.get(SID_A)].sort(), ['r1.request.json', 'req_1.response.json']);
+    // r3 steht nicht im Index: Request über metadata.user_id, Response über die Anfrage davor.
+    assert.deepEqual([...groups.get(SID_B)].sort(),
+      ['r2.request.json', 'r3.request.json', 'req_2.response.json', 'req_3.response.json']);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('sessionGroups teilt ohne index.jsonl nicht', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-'));
+  try {
+    fs.writeFileSync(path.join(tmp, 'a.request.json'), meta(SID_A));
+    fs.writeFileSync(path.join(tmp, 'b.request.json'), meta(SID_B));
+    assert.equal(sessionGroups(tmp), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('sessionGroups lässt Ordner mit nur einer Session ungeteilt', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-'));
+  try {
+    fs.writeFileSync(path.join(tmp, 'a.request.json'), meta(SID_A));
+    fs.writeFileSync(path.join(tmp, 'a.response.json'), '{}');
+    fs.writeFileSync(path.join(tmp, 'index.jsonl'),
+      JSON.stringify({ session_id: SID_A, request_file: 'a.request.json', response_file: 'a.response.json' }) + '\n');
+    assert.equal(sessionGroups(tmp), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('listSessions zeigt nach /clear zwei Sessions mit eigener Kennung', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-'));
+  try {
+    runWithClear(tmp);
+    const sessions = listSessions(tmp);
+    assert.equal(sessions.length, 2);
+    const ids = sessions.map(s => s.id).sort();
+    assert.deepEqual(ids, [
+      `-Users-iris-foo/2026-11-03_test~${SID_A}`,
+      `-Users-iris-foo/2026-11-03_test~${SID_B}`,
+    ]);
+    const b = sessions.find(s => s.sessionId === SID_B);
+    assert.equal(b.requests, 2);
+    assert.equal(b.title, '2026-11-03_test · bbbbbbbb');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('resolveSession löst <lauf>~<session_id> auf und listet nur deren Dateien', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-'));
+  try {
+    const run = runWithClear(tmp);
+    const found = resolveSession(tmp, `-Users-iris-foo/2026-11-03_test~${SID_A}`);
+    assert.deepEqual(found, { dir: run, sid: SID_A });
+    const names = listFiles(found.dir, sessionGroups(found.dir).get(found.sid)).map(f => f.name);
+    assert.deepEqual(names, ['r1.request.json', 'req_1.response.json']);
+    // Ohne Kennung bleibt es der ganze Ordner, wie bisher.
+    assert.deepEqual(resolveSession(tmp, '-Users-iris-foo/2026-11-03_test'), { dir: run, sid: null });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('resolveSession weist ungültige Kennung und Ausbruch ab', () => {
+  assert.equal(resolveSession('/tmp/root', 'proj/lauf~keine-uuid'), null);
+  assert.equal(resolveSession('/tmp/root', `proj/../../x~${SID_A}`), null);
 });

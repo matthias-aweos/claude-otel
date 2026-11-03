@@ -2193,7 +2193,7 @@ function renderSessionPicker(sessions){
       card.className = 'picker-card';
       card.innerHTML = `
         <div>
-          <div class="pc-name">${escHtml(s.name)}</div>
+          <div class="pc-name">${escHtml(s.title || s.name)}</div>
           <div class="pc-meta">
             <span><span class="pc-num">${s.turns}</span><span class="pc-lab">turns</span></span>
             <span><span class="pc-num">${fmt.k(s.size)}</span><span class="pc-lab">bytes</span></span>
