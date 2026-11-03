@@ -96,7 +96,9 @@
   ::-webkit-scrollbar-thumb:hover{background:var(--paper-mute)}
 
   /* ──────── APP SHELL ──────── */
-  .app{display:grid;grid-template-rows:auto 1fr;height:100vh;position:relative;z-index:1}
+  /* minmax(0,1fr): Ohne feste Spalte bestimmt die breite Kopfzeile die Breite des ganzen Rasters;
+     in schmalen Fenstern rutscht der Inhalt dann aus der Mitte und wird abgeschnitten. */
+  .app{display:grid;grid-template-rows:auto 1fr;grid-template-columns:minmax(0,1fr);height:100vh;position:relative;z-index:1}
 
   /* ──────── HEADER ──────── */
   header{
@@ -106,6 +108,7 @@
   }
   .ticker{
     display:flex;align-items:stretch;height:54px;
+    overflow-x:auto;overflow-y:hidden;
   }
   .brand{
     display:flex;align-items:center;gap:0;
@@ -160,11 +163,12 @@
 
   /* ──────── EMPTY (DROP ZONE) ──────── */
   .empty{
-    display:grid;place-items:center;height:100%;padding:48px;
-    position:relative;
+    display:grid;place-items:center;grid-template-columns:minmax(0,1fr);
+    height:100%;padding:clamp(12px,5vw,48px);
+    position:relative;overflow:auto;
   }
   .drop{
-    width:min(680px,92vw);position:relative;padding:72px 52px;
+    width:min(680px,100%);min-width:0;position:relative;padding:clamp(28px,8vw,72px) clamp(18px,6vw,52px);
     border:1px solid var(--rule-bright);
     background:var(--ink);
     text-align:left;
@@ -750,7 +754,8 @@
 
   /* ──────── SESSION PICKER (server mode) ──────── */
   .picker{
-    width:min(880px,92vw);position:relative;padding:54px 56px 48px;
+    width:min(880px,100%);min-width:0;position:relative;
+    padding:clamp(24px,6vw,54px) clamp(16px,6vw,56px) clamp(22px,5vw,48px);
     border:1px solid var(--rule-bright);background:var(--ink);
   }
   .picker-eyebrow{
@@ -759,7 +764,7 @@
   }
   .picker-title{
     font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif;font-weight:500;
-    font-size:52px;line-height:.95;letter-spacing:-.02em;
+    font-size:clamp(30px,7vw,52px);line-height:.95;letter-spacing:-.02em;
     color:var(--paper);margin-bottom:4px;
   }
   .picker-sub{
@@ -2093,10 +2098,27 @@ function startSSE(name){
   }catch(e){}
 }
 
+// Die Sitzungsauswahl fragt die Liste regelmäßig neu ab. Sonst bleibt eine Seite, die vor der
+// ersten Anfrage einer Sitzung geöffnet wurde, bei „0 sessions“ stehen, bis jemand neu lädt.
+let _pickerPoll = null;
+function stopPickerPoll(){ if(_pickerPoll){ clearInterval(_pickerPoll); _pickerPoll = null; } }
+function startPickerPoll(sessions){
+  stopPickerPoll();
+  const signatur = list => JSON.stringify(list.map(s=>[s.id, s.files, s.last]));
+  const bisher = signatur(sessions);
+  _pickerPoll = setInterval(async ()=>{
+    try{
+      const neu = await refreshSessionList();
+      if(signatur(neu) !== bisher) renderSessionPicker(neu);
+    }catch(e){ /* Server kurz weg: beim nächsten Takt erneut */ }
+  }, 3000);
+}
+
 async function loadServerSession(name){
   try{
     const data = await fetchSessionData(name);
     if(!data.turns.length){ showError('session has no turns'); return; }
+    stopPickerPoll();
     S.data = data;
     S.current = 0;
     document.getElementById('empty').classList.add('hidden');
@@ -2111,6 +2133,7 @@ async function loadServerSession(name){
 
 function renderSessionPicker(sessions){
   stopSSE();
+  startPickerPoll(sessions);
   const empty = document.getElementById('empty');
   empty.classList.remove('hidden');
   document.getElementById('main').classList.add('hidden');
